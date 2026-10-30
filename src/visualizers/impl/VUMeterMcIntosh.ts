@@ -1,8 +1,9 @@
 /**
  * VU Meter (McIntosh) — a Canvas 2D visualizer. Same ballistic VU math as `VUMeter`, restyled
- * as a McIntosh-style stereo amplifier front: black brushed housing, blue-lit meter faces,
- * fine black needles, and the current Sendspin track (artist / title) printed below the
- * meters, falling back to "Music Assistant" when no track info is available.
+ * as a McIntosh-style stereo amplifier front: brushed-metal housing with corner screws,
+ * deep cobalt-blue lamp-lit meter faces with a vignette and a curved-glass highlight, tapered
+ * black needles, and the current Sendspin track (artist / title) printed below the meters,
+ * falling back to "Music Assistant" when no track info is available.
  */
 import { mountCanvas2D } from '../lib/canvas2d';
 import type { VisualizerFactory } from '../runtime/types';
@@ -45,7 +46,35 @@ function drawArc(
   ctx.stroke();
 }
 
-/** A McIntosh-style meter: black housing, blue-lit glass face, fine black needle. */
+/** Four small Phillips-head screws, one near each corner of the housing. */
+function drawScrews(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  const inset = r * 1.6;
+  const positions: Array<[number, number]> = [
+    [x + inset, y + inset],
+    [x + w - inset, y + inset],
+    [x + inset, y + h - inset],
+    [x + w - inset, y + h - inset],
+  ];
+  for (const [sx, sy] of positions) {
+    const grad = ctx.createRadialGradient(sx - r * 0.3, sy - r * 0.3, 0, sx, sy, r);
+    grad.addColorStop(0, '#b9bec4');
+    grad.addColorStop(0.5, '#6b6f74');
+    grad.addColorStop(1, '#202224');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.fill();
+    // Slot
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.lineWidth = Math.max(0.6, r * 0.22);
+    ctx.beginPath();
+    ctx.moveTo(sx - r * 0.55, sy);
+    ctx.lineTo(sx + r * 0.55, sy);
+    ctx.stroke();
+  }
+}
+
+/** A McIntosh-style meter: brushed housing, deep lamp-lit glass face, tapered black needle. */
 function drawMeterFace(
   ctx: CanvasRenderingContext2D,
   x: number, y: number, w: number, h: number,
@@ -55,69 +84,88 @@ function drawMeterFace(
   const pivotY = y + h * 0.85;
   const R = h * 0.62;
   const fs = Math.max(7, Math.min(w * 0.042, 18));
-  const cr = w * 0.035;
+  const cr = w * 0.03;
+  const bezelPad = w * 0.045;
 
-  // Black brushed housing
-  ctx.fillStyle = '#060608';
+  // --- Brushed-metal housing ---
+  const housing = ctx.createLinearGradient(x - bezelPad, y - bezelPad, x - bezelPad, y + h + bezelPad);
+  housing.addColorStop(0, '#2b2d30');
+  housing.addColorStop(0.08, '#141516');
+  housing.addColorStop(0.5, '#0a0a0b');
+  housing.addColorStop(0.92, '#141516');
+  housing.addColorStop(1, '#2b2d30');
+  ctx.fillStyle = housing;
   ctx.beginPath();
-  ctx.roundRect(x - 4, y - 4, w + 8, h + 8, cr + 3);
+  ctx.roundRect(x - bezelPad, y - bezelPad, w + bezelPad * 2, h + bezelPad * 2, cr + bezelPad * 0.6);
   ctx.fill();
 
-  // Chrome bezel ring
-  ctx.strokeStyle = 'rgba(190,196,204,0.35)';
-  ctx.lineWidth = 1.5;
+  drawScrews(ctx, x - bezelPad, y - bezelPad, w + bezelPad * 2, h + bezelPad * 2, Math.max(2, w * 0.012));
+
+  // Recessed chrome lip just outside the glass
+  ctx.strokeStyle = 'rgba(210,214,220,0.4)';
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.roundRect(x - 2, y - 2, w + 4, h + 4, cr + 1.5);
+  ctx.roundRect(x - 2, y - 2, w + 4, h + 4, cr + 1);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(x - 4, y - 4, w + 8, h + 8, cr + 2);
   ctx.stroke();
 
-  // Blue-lit glass face: darker navy edges, brighter cyan glow near the lamp (bottom-centre)
-  const face = ctx.createLinearGradient(x, y, x, y + h);
-  face.addColorStop(0, '#0c2740');
-  face.addColorStop(0.55, '#123a5e');
-  face.addColorStop(1, '#0a2033');
-  ctx.fillStyle = face;
+  // --- Deep cobalt-blue lamp-lit glass face ---
+  ctx.save();
   ctx.beginPath();
   ctx.roundRect(x, y, w, h, cr);
-  ctx.fill();
+  ctx.clip();
 
-  // Lamp glow, sourced from near the pivot like the real thing
-  const glow = ctx.createRadialGradient(cx, pivotY - R * 0.15, 0, cx, pivotY, R * 1.5);
-  glow.addColorStop(0, 'rgba(120,210,255,0.35)');
-  glow.addColorStop(0.45, 'rgba(70,160,230,0.14)');
-  glow.addColorStop(1, 'rgba(0,10,20,0.05)');
+  // Base: near-black navy at the corners, rich blue through the middle
+  const base = ctx.createLinearGradient(x, y, x, y + h);
+  base.addColorStop(0, '#071826');
+  base.addColorStop(0.5, '#0e3254');
+  base.addColorStop(1, '#061420');
+  ctx.fillStyle = base;
+  ctx.fillRect(x, y, w, h);
+
+  // Lamp glow: warm-white core fading through cyan into the blue base, sourced low/centre
+  const lampX = cx;
+  const lampY = pivotY - R * 0.1;
+  const glow = ctx.createRadialGradient(lampX, lampY, 0, lampX, lampY, R * 1.55);
+  glow.addColorStop(0, 'rgba(210,240,255,0.55)');
+  glow.addColorStop(0.18, 'rgba(140,215,255,0.38)');
+  glow.addColorStop(0.45, 'rgba(70,165,230,0.18)');
+  glow.addColorStop(0.75, 'rgba(20,80,130,0.05)');
+  glow.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, cr);
-  ctx.fill();
+  ctx.fillRect(x, y, w, h);
 
-  const red = 'hsl(355, 78%, 50%)';
+  // Vignette: darken the corners so the glow reads as sourced light, not a flat fill
+  const vignette = ctx.createRadialGradient(cx, y + h * 0.42, R * 0.6, cx, y + h * 0.42, Math.max(w, h) * 0.75);
+  vignette.addColorStop(0, 'rgba(0,0,0,0)');
+  vignette.addColorStop(0.7, 'rgba(0,0,0,0)');
+  vignette.addColorStop(1, 'rgba(0,4,10,0.55)');
+  ctx.fillStyle = vignette;
+  ctx.fillRect(x, y, w, h);
 
-  // VU label
-  ctx.fillStyle = '#eaf4ff';
-  ctx.font = `bold ${fs * 2}px Georgia, "Times New Roman", serif`;
+  const red = 'hsl(353, 82%, 52%)';
+
+  // VU label, with a faint emboss (dark stroke behind, bright fill on top)
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  ctx.font = `bold ${fs * 2.1}px "Helvetica Neue", Arial, sans-serif`;
+  ctx.lineWidth = Math.max(1, fs * 0.09);
+  ctx.strokeStyle = 'rgba(0,10,20,0.55)';
+  ctx.strokeText('VU', cx, y + h * 0.1 + 1);
+  ctx.fillStyle = '#f2f9ff';
   ctx.fillText('VU', cx, y + h * 0.1);
 
-  // Screw dot
-  ctx.fillStyle = 'rgba(10,20,30,0.8)';
-  ctx.beginPath();
-  ctx.arc(cx, y + h * 0.19, w * 0.016, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,0.18)';
-  ctx.beginPath();
-  ctx.arc(cx - 0.5, y + h * 0.19 - 0.5, w * 0.007, 0, Math.PI * 2);
-  ctx.fill();
-
   // === dB SCALE ===
-  // Black arc: -20 to 0
   ctx.strokeStyle = '#061018';
-  ctx.lineWidth = Math.max(1.2, w * 0.004);
+  ctx.lineWidth = Math.max(1.3, w * 0.0045);
   drawArc(ctx, cx, pivotY, R, -20, 0, 60, true);
 
-  // Red arc: 0 to +3
   ctx.strokeStyle = red;
-  ctx.lineWidth = Math.max(1.5, w * 0.005);
+  ctx.lineWidth = Math.max(1.6, w * 0.0055);
   drawArc(ctx, cx, pivotY, R, 0, 3, 30, true);
 
   const dbMarks = [
@@ -129,8 +177,8 @@ function drawMeterFace(
     { vu: 3, label: '3' },
   ];
 
-  const tick = R * 0.065;
-  ctx.font = `bold ${fs}px Arial, Helvetica, sans-serif`;
+  const tick = R * 0.07;
+  ctx.font = `bold ${fs}px "Helvetica Neue", Arial, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
@@ -141,18 +189,17 @@ function drawMeterFace(
     const isRed = m.vu >= 1;
 
     ctx.strokeStyle = isRed ? red : '#061018';
-    ctx.lineWidth = Math.max(1, w * 0.003);
+    ctx.lineWidth = Math.max(1.1, w * 0.0032);
     ctx.beginPath();
     ctx.moveTo(cx + sin * R, pivotY - cos * R);
     ctx.lineTo(cx + sin * (R - tick), pivotY - cos * (R - tick));
     ctx.stroke();
 
-    const lr = R + fs * 0.75;
-    ctx.fillStyle = isRed ? red : '#eaf4ff';
+    const lr = R + fs * 0.78;
+    ctx.fillStyle = isRed ? red : '#f2f9ff';
     ctx.fillText(m.label, cx + sin * lr, pivotY - cos * lr);
   }
 
-  // Minor ticks
   for (const vu of [-15, -8, -6, -4, -0.5, 0.5, 1.5, 2.5]) {
     const a = vuToAngle(vu);
     const isRed = vu > 0;
@@ -164,109 +211,138 @@ function drawMeterFace(
     ctx.stroke();
   }
 
-  // − and + symbols
-  ctx.font = `bold ${fs * 1.2}px Arial, Helvetica, sans-serif`;
-  const symR = R + fs * 1.7;
-
+  ctx.font = `bold ${fs * 1.2}px "Helvetica Neue", Arial, sans-serif`;
+  const symR = R + fs * 1.75;
   const minusA = vuToAngle(-16);
-  ctx.fillStyle = '#eaf4ff';
+  ctx.fillStyle = '#f2f9ff';
   ctx.fillText('−', cx + Math.sin(minusA) * symR, pivotY - Math.cos(minusA) * symR);
-
   const plusA = vuToAngle(1.5);
   ctx.fillStyle = red;
   ctx.fillText('+', cx + Math.sin(plusA) * symR, pivotY - Math.cos(plusA) * symR);
 
   // === PERCENTAGE SCALE ===
-  const pR = R * 0.82;
-  const pTick = tick * 0.55;
-  const pFs = fs * 0.72;
+  const pR = R * 0.8;
+  const pTick = tick * 0.5;
+  const pFs = fs * 0.7;
 
-  ctx.strokeStyle = 'rgba(234,244,255,0.5)';
+  ctx.strokeStyle = 'rgba(230,244,255,0.45)';
   ctx.lineWidth = Math.max(0.7, w * 0.002);
   drawArc(ctx, cx, pivotY, pR, 0, 100, 50, false);
 
-  ctx.font = `${pFs}px Arial, Helvetica, sans-serif`;
-  ctx.fillStyle = 'rgba(234,244,255,0.5)';
-
+  ctx.font = `${pFs}px "Helvetica Neue", Arial, sans-serif`;
   for (const pct of [0, 20, 40, 60, 80, 100]) {
     const a = pctToAngle(pct);
     const sin = Math.sin(a);
     const cos = Math.cos(a);
-
-    ctx.strokeStyle = 'rgba(234,244,255,0.5)';
+    ctx.strokeStyle = 'rgba(230,244,255,0.45)';
     ctx.lineWidth = Math.max(0.5, w * 0.002);
     ctx.beginPath();
     ctx.moveTo(cx + sin * pR, pivotY - cos * pR);
     ctx.lineTo(cx + sin * (pR - pTick), pivotY - cos * (pR - pTick));
     ctx.stroke();
-
+    ctx.fillStyle = 'rgba(230,244,255,0.5)';
     const lr = pR - pTick - pFs * 0.7;
     ctx.fillText(String(pct), cx + sin * lr, pivotY - cos * lr);
   }
 
-  // === NEEDLE ===
+  // === NEEDLE (tapered, like a real meter pointer) ===
   const needleAngle = vuToAngle(vuLevel);
-  const needleLen = R * 1.02;
-  const tipX = cx + Math.sin(needleAngle) * needleLen;
-  const tipY = pivotY - Math.cos(needleAngle) * needleLen;
+  const dirX = Math.sin(needleAngle);
+  const dirY = -Math.cos(needleAngle);
+  const perpX = -dirY;
+  const perpY = dirX;
 
-  const cwLen = R * 0.12;
-  const cwX = cx - Math.sin(needleAngle) * cwLen;
-  const cwY = pivotY + Math.cos(needleAngle) * cwLen;
+  const needleLen = R * 1.03;
+  const baseWidth = Math.max(1.8, w * 0.009);
+  const tipWidth = Math.max(0.4, w * 0.0012);
+  const cwLen = R * 0.13;
+
+  const tipX = cx + dirX * needleLen;
+  const tipY = pivotY + dirY * needleLen;
+  const cwX = cx - dirX * cwLen;
+  const cwY = pivotY - dirY * cwLen;
 
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.4)';
-  ctx.shadowBlur = 3;
-  ctx.shadowOffsetX = 1;
+  ctx.shadowColor = 'rgba(0,0,0,0.45)';
+  ctx.shadowBlur = 4;
+  ctx.shadowOffsetX = 1.5;
   ctx.shadowOffsetY = 2;
 
-  ctx.strokeStyle = '#0a0a0a';
-  ctx.lineWidth = Math.max(1.2, w * 0.005);
-  ctx.lineCap = 'round';
+  const needleGrad = ctx.createLinearGradient(
+    cx - perpX * baseWidth, pivotY - perpY * baseWidth,
+    cx + perpX * baseWidth, pivotY + perpY * baseWidth
+  );
+  needleGrad.addColorStop(0, '#000000');
+  needleGrad.addColorStop(0.45, '#1a1a1a');
+  needleGrad.addColorStop(0.55, '#000000');
+  needleGrad.addColorStop(1, '#000000');
+  ctx.fillStyle = needleGrad;
   ctx.beginPath();
-  ctx.moveTo(cwX, cwY);
-  ctx.lineTo(tipX, tipY);
-  ctx.stroke();
+  ctx.moveTo(cwX + perpX * baseWidth * 0.6, cwY + perpY * baseWidth * 0.6);
+  ctx.lineTo(cx + perpX * baseWidth, pivotY + perpY * baseWidth);
+  ctx.lineTo(tipX + perpX * tipWidth, tipY + perpY * tipWidth);
+  ctx.lineTo(tipX - perpX * tipWidth, tipY - perpY * tipWidth);
+  ctx.lineTo(cx - perpX * baseWidth, pivotY - perpY * baseWidth);
+  ctx.lineTo(cwX - perpX * baseWidth * 0.6, cwY - perpY * baseWidth * 0.6);
+  ctx.closePath();
+  ctx.fill();
   ctx.restore();
 
   // Counterweight
   ctx.fillStyle = '#0a0a0a';
   ctx.beginPath();
-  ctx.arc(cwX, cwY, w * 0.01, 0, Math.PI * 2);
+  ctx.arc(cwX, cwY, w * 0.011, 0, Math.PI * 2);
   ctx.fill();
 
-  // Pivot cover
-  ctx.fillStyle = '#111';
+  // Pivot cover (polished centre cap)
+  const pivotGrad = ctx.createRadialGradient(cx - w * 0.006, pivotY - w * 0.006, 0, cx, pivotY, w * 0.024);
+  pivotGrad.addColorStop(0, '#5a5a5a');
+  pivotGrad.addColorStop(0.5, '#1a1a1a');
+  pivotGrad.addColorStop(1, '#000000');
+  ctx.fillStyle = pivotGrad;
   ctx.beginPath();
-  ctx.arc(cx, pivotY, w * 0.022, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,0.15)';
-  ctx.beginPath();
-  ctx.arc(cx - 1, pivotY - 1, w * 0.01, 0, Math.PI * 2);
+  ctx.arc(cx, pivotY, w * 0.024, 0, Math.PI * 2);
   ctx.fill();
 
   // Channel label
-  ctx.fillStyle = 'rgba(234,244,255,0.7)';
-  ctx.font = `${fs * 0.9}px Georgia, serif`;
+  ctx.fillStyle = 'rgba(230,244,255,0.7)';
+  ctx.font = `${fs * 0.9}px "Helvetica Neue", Arial, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(label, cx, pivotY + h * 0.08);
 
-  // Glass reflection (diagonal highlight, like curved glass over the dial)
-  ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, cr);
-  ctx.clip();
-  const glass = ctx.createLinearGradient(x, y, x + w * 0.6, y + h * 0.4);
-  glass.addColorStop(0, 'rgba(255,255,255,0.14)');
-  glass.addColorStop(0.4, 'rgba(255,255,255,0.03)');
-  glass.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = glass;
+  // --- Curved-glass highlight: a broad soft diagonal sweep plus a tighter specular streak ---
+  const sweep = ctx.createLinearGradient(x, y, x + w * 0.75, y + h * 0.55);
+  sweep.addColorStop(0, 'rgba(255,255,255,0.16)');
+  sweep.addColorStop(0.35, 'rgba(255,255,255,0.05)');
+  sweep.addColorStop(0.6, 'rgba(255,255,255,0)');
+  ctx.fillStyle = sweep;
   ctx.fillRect(x, y, w, h);
+
+  ctx.save();
+  ctx.translate(x + w * 0.28, y + h * 0.22);
+  ctx.rotate(-0.55);
+  const streak = ctx.createLinearGradient(-w * 0.12, 0, w * 0.12, 0);
+  streak.addColorStop(0, 'rgba(255,255,255,0)');
+  streak.addColorStop(0.5, 'rgba(255,255,255,0.22)');
+  streak.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = streak;
+  ctx.fillRect(-w * 0.12, -h * 0.55, w * 0.24, h * 1.1);
   ctx.restore();
 
-  // Bezel inner edge
-  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  // Subtle dark curvature at the very top and bottom edge of the dome
+  const domeShade = ctx.createLinearGradient(x, y, x, y + h);
+  domeShade.addColorStop(0, 'rgba(0,0,0,0.22)');
+  domeShade.addColorStop(0.12, 'rgba(0,0,0,0)');
+  domeShade.addColorStop(0.9, 'rgba(0,0,0,0)');
+  domeShade.addColorStop(1, 'rgba(0,0,0,0.3)');
+  ctx.fillStyle = domeShade;
+  ctx.fillRect(x, y, w, h);
+
+  ctx.restore(); // end clip
+
+  // Glass edge
+  ctx.strokeStyle = 'rgba(0,0,0,0.65)';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.roundRect(x, y, w, h, cr);
@@ -327,8 +403,12 @@ const VUMeterMcIntosh: VisualizerFactory = ({ container }) => {
       smoothedL += (tL - smoothedL) * (tL > smoothedL ? attack : release);
       smoothedR += (tR - smoothedR) * (tR > smoothedR ? attack : release);
 
-      // Black amplifier front
-      ctx.fillStyle = '#030303';
+      // Brushed-black amplifier front
+      const bg = ctx.createLinearGradient(0, 0, 0, h);
+      bg.addColorStop(0, '#1c1d1f');
+      bg.addColorStop(0.5, '#050505');
+      bg.addColorStop(1, '#141516');
+      ctx.fillStyle = bg;
       ctx.fillRect(0, 0, w, h);
 
       // Reserve a strip at the bottom for the now-playing text
@@ -336,8 +416,8 @@ const VUMeterMcIntosh: VisualizerFactory = ({ container }) => {
       const meterAreaH = h - textH;
 
       // Layout two meters side-by-side
-      const pad = Math.min(w, meterAreaH) * 0.05;
-      const gap = Math.min(w, meterAreaH) * 0.025;
+      const pad = Math.min(w, meterAreaH) * 0.07;
+      const gap = Math.min(w, meterAreaH) * 0.04;
       const aspect = 1.35;
 
       let mW = (w - pad * 2 - gap) / 2;
