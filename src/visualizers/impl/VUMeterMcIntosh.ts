@@ -1,12 +1,12 @@
 /**
  * VU Meter (McIntosh) — a Canvas 2D visualizer. Same ballistic VU math as `VUMeter`, restyled
- * as a single McIntosh-style wide meter window: solid black housing with corner screws, one
- * deep cobalt-blue lamp-lit glass face holding both channels as stacked rows (L on top, R
- * below). Each row carries that meter's dual-ring look — an outer and an inner dashed scale,
- * both read by one tapered needle — but it's still a normal VU meter underneath: both rings
- * share the same VU numbers rather than a separately calibrated watts/dB scale. The current
- * Sendspin track (artist / title) prints inside the glass at the bottom, where "POWER OUTPUT"
- * sits on the real unit, falling back to "Music Assistant" when no track info is available.
+ * as a single McIntosh-style wide meter window: solid black housing (top corners rounded,
+ * bottom corners square) with corner screws, one deep cobalt-blue lamp-lit glass face — lit
+ * from below, like a real backlit bulb — holding both channels as stacked rows (L on top, R
+ * below). Each row is a normal VU meter wearing that meter's dashed-scale look: one wide,
+ * shallow ring per channel, read by one long thin needle, with a small angled "stop" mark at
+ * each end of the scale. A fixed "MusicAssistant" title sits above the rings; the current
+ * Sendspin track (artist – title) prints below the bottom ring.
  */
 import { mountCanvas2D } from '../lib/canvas2d';
 import type { VisualizerFactory } from '../runtime/types';
@@ -15,44 +15,35 @@ import type { VisualizerFactory } from '../runtime/types';
 // A shallow sweep (narrow angle range) so the scale reads almost edge-to-edge across a wide
 // window with modest vertical rise, like a real meter's needle pivoting far below the dial.
 // Symmetric around 0° so the curve itself — not just its bounding box — sits visually centered.
-const ARC_START_DEG = -30;
-const ARC_END_DEG = 30;
+const ARC_START_DEG = -18;
+const ARC_END_DEG = 18;
 const ARC_START = (ARC_START_DEG * Math.PI) / 180;
 const ARC_END = (ARC_END_DEG * Math.PI) / 180;
 const ARC_SPAN = ARC_END - ARC_START;
 
 // --- Printed scale graduation ---
-// A real meter's needle follows a log response, but its printed tick marks are drawn evenly
-// spaced across the dial face — not crowded together the way a strict log scale would put them.
-// Five equal 10 dB steps (-50..0), then a smaller 0.3x step out to the +3 dB headroom mark —
-// mirrors the reference photo, where the -50..0 ticks are evenly fanned and the +3 overload tick
-// sits closer to 0 than a full 10 dB step away.
-const DB_MARKS = [-50, -40, -30, -20, -10, 0, 3];
-const TICK_WEIGHTS = [1, 1, 1, 1, 1, 0.3];
-const TICK_WEIGHT_SUM = TICK_WEIGHTS.reduce((a, b) => a + b, 0);
-function computeTickAngles(): number[] {
+// A normal VU meter's scale, not a watts/dB calibration: -20, -10, -7, -5, -3, -2, -1, 0,
+// +1, +2, +3 — evenly fanned across the arc, with 0 and above in the red "overload" zone.
+const MARKS = [-20, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3];
+const TICK_ANGLES: number[] = (() => {
+  const weights = MARKS.slice(1).map(() => 1); // evenly fanned
+  const weightSum = weights.reduce((a, b) => a + b, 0);
   const angles = [ARC_START];
   let acc = 0;
-  for (const wgt of TICK_WEIGHTS) {
+  for (const wgt of weights) {
     acc += wgt;
-    angles.push(ARC_START + (acc / TICK_WEIGHT_SUM) * ARC_SPAN);
+    angles.push(ARC_START + (acc / weightSum) * ARC_SPAN);
   }
   return angles;
-}
-const TICK_ANGLES = computeTickAngles();
+})();
 
-/**
- * The needle's angle for a given VU/dB level — interpolated along the SAME evenly-fanned scale
- * as the printed tick marks (not a separate true-log curve). Using a different curve for the
- * needle than for the graduation it points at used to pull them far apart (e.g. the true-log
- * angle for -20 dB sits barely past the scale's start, while the printed "-20" tick sits past
- * the middle), so the needle never pointed at the number matching its own level.
- */
+/** The needle's angle for a given VU level — interpolated along the same evenly-fanned scale
+ *  as the printed tick marks, so the needle always points at the number matching its own level. */
 function vuToAngle(vu: number): number {
-  const v = Math.max(DB_MARKS[0], Math.min(DB_MARKS[DB_MARKS.length - 1], vu));
-  for (let i = 0; i < DB_MARKS.length - 1; i++) {
-    const a = DB_MARKS[i];
-    const b = DB_MARKS[i + 1];
+  const v = Math.max(MARKS[0], Math.min(MARKS[MARKS.length - 1], vu));
+  for (let i = 0; i < MARKS.length - 1; i++) {
+    const a = MARKS[i];
+    const b = MARKS[i + 1];
     if (v <= b) {
       const t = (v - a) / (b - a);
       return TICK_ANGLES[i] + t * (TICK_ANGLES[i + 1] - TICK_ANGLES[i]);
@@ -66,26 +57,26 @@ function vuToAngle(vu: number): number {
  * Found once by sampling the angle range, then used to fit the arc snugly into any box
  * (see `fitRow`) without hand-tuned per-size constants.
  */
-function scanArcBounds(): { minF: number; maxF: number; minSin: number; maxSin: number } {
-  let minF = Infinity, maxF = -Infinity, minSin = Infinity, maxSin = -Infinity;
-  const steps = 200;
+function scanArcBounds(): { minF: number; minSin: number; maxSin: number } {
+  let minF = Infinity, minSin = Infinity, maxSin = -Infinity;
+  const steps = 300;
   for (let i = 0; i <= steps; i++) {
     const theta = ARC_START + (i / steps) * ARC_SPAN;
     const f = -Math.cos(theta); // y-offset factor from the pivot
     const s = Math.sin(theta); // x-offset factor from the pivot
     if (f < minF) minF = f;
-    if (f > maxF) maxF = f;
     if (s < minSin) minSin = s;
     if (s > maxSin) maxSin = s;
   }
-  return { minF, maxF, minSin, maxSin };
+  return { minF, minSin, maxSin };
 }
 const ARC_BOUNDS = scanArcBounds();
 
 /**
  * Pivot point and radius so the swept arc spans `widthFill` of the row's width, almost
- * edge-to-edge like a real meter. Width drives the size; the caller sizes `rowH` generously
- * enough (see `drawMeterWindow`) to hold the resulting — fairly shallow — vertical rise.
+ * edge-to-edge like a real meter. At this shallow, wide angle the pivot sits far below the
+ * row — R itself ends up very large — which the needle and end-stop math below has to work
+ * around rather than treat as an ordinary small-radius dial.
  */
 function fitRow(x: number, w: number, rowTopY: number, widthFill: number): { R: number; pivotY: number; cx: number } {
   const { minF, minSin, maxSin } = ARC_BOUNDS;
@@ -95,25 +86,24 @@ function fitRow(x: number, w: number, rowTopY: number, widthFill: number): { R: 
   return { R, pivotY, cx };
 }
 
-/** Draws one dashed ring (either the outer WATTS or the inner DECIBELS scale) along `angles`. */
+/** Draws the row's dashed scale ring along `TICK_ANGLES`, with a small gap between dashes. */
 function drawDashedRing(
   ctx: CanvasRenderingContext2D,
-  cx: number, pivotY: number, R: number,
-  angles: number[], lineWidth: number, red: string
+  cx: number, pivotY: number, R: number, lineWidth: number, red: string
 ) {
   ctx.lineWidth = lineWidth;
   ctx.lineCap = 'butt';
-  for (let i = 0; i < angles.length - 1; i++) {
-    const aFromRaw = angles[i];
-    const aToRaw = angles[i + 1];
-    const isRed = DB_MARKS[i] >= 0;
+  for (let i = 0; i < TICK_ANGLES.length - 1; i++) {
+    const aFromRaw = TICK_ANGLES[i];
+    const aToRaw = TICK_ANGLES[i + 1];
+    const isRed = MARKS[i] >= 0;
     ctx.strokeStyle = isRed ? red : '#0c2d44';
     const segDeg = (aToRaw - aFromRaw) * (180 / Math.PI);
-    const gapRad = (Math.min(1.0, segDeg * 0.1) * Math.PI) / 180;
+    const gapRad = (Math.min(1.2, segDeg * 0.12) * Math.PI) / 180;
     const aFrom = aFromRaw + gapRad;
     const aTo = aToRaw - gapRad;
     ctx.beginPath();
-    const steps = 16;
+    const steps = 12;
     for (let s = 0; s <= steps; s++) {
       const a = aFrom + (s / steps) * (aTo - aFrom);
       const px = cx + Math.sin(a) * R;
@@ -126,140 +116,118 @@ function drawDashedRing(
 }
 
 /**
- * The small angled "stop" mark at each end of a ring — a real meter's scale ends in a short
- * flick bent away from the dash direction (the mechanical end-of-travel marker), not just
- * another straight dash like the rest of the graduation.
+ * The small V-shaped "stop" mark at one end of the ring — a mechanical end-of-travel flag,
+ * like the real meter's. IMPORTANT: this is deliberately built from fixed PIXEL lengths, not
+ * as a rotation around the ring's own (very distant) pivot. An angle-based hook — rotating a
+ * few degrees around R — looked right on an ordinary small-radius dial, but on this shallow,
+ * wide sweep R is enormous, so even a small angle change swept a huge pixel distance and shot
+ * the hook far outside the glass. Two short fixed-length segments avoid that entirely.
  */
 function drawEndStop(
   ctx: CanvasRenderingContext2D,
-  cx: number, pivotY: number, R: number,
-  angle: number, bendSign: 1 | -1, lineWidth: number
+  cx: number, pivotY: number, R: number, w: number,
+  angle: number, bendSign: 1 | -1, lineWidth: number, color: string
 ) {
-  const bend = (16 * Math.PI) / 180;
-  const tangent = angle + bendSign * bend;
   const baseX = cx + Math.sin(angle) * R;
   const baseY = pivotY - Math.cos(angle) * R;
-  const tipLen = R * 0.032;
-  const tipX = cx + Math.sin(tangent) * (R + tipLen);
-  const tipY = pivotY - Math.cos(tangent) * (R + tipLen);
-  ctx.strokeStyle = '#0c2d44';
+  // direction the ring continues outward in, past this end's last dash
+  const ox = bendSign * Math.cos(angle);
+  const oy = bendSign * Math.sin(angle);
+  const segLen = Math.max(12, w * 0.016);
+  const vx = baseX + ox * segLen;
+  const vy = baseY + oy * segLen;
+  // second segment folds sharply back (~100°) to form the V
+  const kink = bendSign * ((-100 * Math.PI) / 180);
+  const rx = ox * Math.cos(kink) - oy * Math.sin(kink);
+  const ry = ox * Math.sin(kink) + oy * Math.cos(kink);
+  const tipX = vx + rx * segLen;
+  const tipY = vy + ry * segLen;
+  ctx.strokeStyle = color;
   ctx.lineWidth = lineWidth;
   ctx.lineCap = 'butt';
+  ctx.lineJoin = 'round';
   ctx.beginPath();
   ctx.moveTo(baseX, baseY);
+  ctx.lineTo(vx, vy);
   ctx.lineTo(tipX, tipY);
   ctx.stroke();
+  ctx.lineCap = 'round';
 }
 
 /**
- * One channel's dual-ring scale + needle, fitted into a horizontal row of the shared glass —
- * an outer and an inner ring, both read by the same needle, like the real McIntosh power-output
- * meter. The exact watts/dB calibration isn't the point — this is a normal VU meter wearing
- * that meter's look, so both rings share the same simple VU numbers rather than a separately
- * computed watts scale. Returns the row's lowest drawn pixel so the next row can stack below it.
+ * One channel's scale + needle, fitted into a horizontal row of the shared glass. `bandBottomY`
+ * is the pixel row (not a fraction of R) the needle's visible base should reach down to — see
+ * the needle section below for why that has to be a fixed pixel position rather than a fraction
+ * of R. Returns the row's lowest drawn pixel so the next row (or the artist/title text) can be
+ * placed below it.
  */
 function drawRow(
   ctx: CanvasRenderingContext2D,
   x: number, w: number, topY: number,
-  vuLevel: number, chLabel: string
+  vuLevel: number, bandBottomY: number
 ): { lowestY: number } {
   const red = 'hsl(353, 82%, 52%)';
-  const fsOuter = Math.max(12, Math.min(w * 0.016, 30));
-  const fsInner = Math.max(9, Math.min(w * 0.0105, 20));
+  const widthFill = 0.92;
+  const { R, pivotY, cx } = fitRow(x, w, topY, widthFill);
 
-  const wattsLabelSpace = fsOuter * 1.55;
-  const arcApexY = topY + wattsLabelSpace;
+  const fsLabel = Math.max(14, Math.min(w * 0.022, 34));
+  const ringLineWidth = Math.max(7, w * 0.012);
 
-  const { R: Router, pivotY, cx } = fitRow(x, w, arcApexY, 0.88);
-  // The pivot sits far below the row (shallow, wide sweep), so a smaller radius sharing that
-  // same pivot would collapse toward it instead of nesting next to the outer ring. A small,
-  // fixed pixel gap (not a ratio of R) keeps the inner ring close against the outer one, like
-  // the reference's tightly nested pair rather than two widely separated arcs.
-  const ringGap = fsInner * 2.6;
-  const Rinner = Router - ringGap;
+  drawDashedRing(ctx, cx, pivotY, R, ringLineWidth, red);
 
-  const dbLabels = ['-50', '-40', '-30', '-20', '-10', '0', '+3'];
+  // Stop marks: the left end (lowest mark) stays in the dial's normal dark ink; the right end
+  // sits in the red overload zone, so its stop mark reads red too, matching the ring under it.
+  drawEndStop(ctx, cx, pivotY, R, w, TICK_ANGLES[0], -1, ringLineWidth, '#0c2d44');
+  drawEndStop(ctx, cx, pivotY, R, w, TICK_ANGLES[TICK_ANGLES.length - 1], 1, ringLineWidth, red);
 
-  // Both rings read the same, fairly thin stroke weight and the same single navy ink (with just
-  // the overload segment in red) — one continuous-reading dial, not two differently-styled ones.
-  const ringLineWidth = Math.max(2.0, w * 0.0032);
-  drawDashedRing(ctx, cx, pivotY, Router, TICK_ANGLES, ringLineWidth, red);
-  drawDashedRing(ctx, cx, pivotY, Rinner, TICK_ANGLES, ringLineWidth, red);
-  drawEndStop(ctx, cx, pivotY, Router, TICK_ANGLES[0], -1, ringLineWidth);
-  drawEndStop(ctx, cx, pivotY, Router, TICK_ANGLES[TICK_ANGLES.length - 1], 1, ringLineWidth);
-  drawEndStop(ctx, cx, pivotY, Rinner, TICK_ANGLES[0], -1, ringLineWidth);
-  drawEndStop(ctx, cx, pivotY, Rinner, TICK_ANGLES[TICK_ANGLES.length - 1], 1, ringLineWidth);
-
+  // Scale numbers stay in the dial's dark ink everywhere — including over the red zone, where
+  // only the ring/stop itself turns red, not the printed digits.
+  ctx.font = `600 ${fsLabel}px "Helvetica Neue", Arial, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#0c2d44';
   for (let i = 0; i < TICK_ANGLES.length; i++) {
     const a = TICK_ANGLES[i];
-    const sin = Math.sin(a);
-    const cos = Math.cos(a);
-    const isRed = DB_MARKS[i] >= 1;
-    ctx.fillStyle = isRed ? red : '#0c2d44';
-    ctx.font = `600 ${fsOuter}px "Helvetica Neue", Arial, sans-serif`;
-    const lrOuter = Router + fsOuter * 0.8;
-    ctx.fillText(dbLabels[i], cx + sin * lrOuter, pivotY - cos * lrOuter);
-    ctx.font = `600 ${fsInner}px "Helvetica Neue", Arial, sans-serif`;
-    const lrInner = Rinner + fsInner * 0.85;
-    ctx.fillText(dbLabels[i], cx + sin * lrInner, pivotY - cos * lrInner);
+    const lr = R + fsLabel * 0.9;
+    ctx.fillText(`${MARKS[i]}`, cx + Math.sin(a) * lr, pivotY - Math.cos(a) * lr);
   }
 
-  // Channel label at the left edge of the row
-  ctx.font = `bold ${fsOuter * 0.8}px "Helvetica Neue", Arial, sans-serif`;
-  ctx.fillStyle = 'rgba(12,45,68,0.75)';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(chLabel, x + w * 0.012, arcApexY + fsOuter * 0.8);
-
-  // === NEEDLE (tapered, like a real meter pointer), crossing through both rings ===
+  // === NEEDLE: long, thin, uniform width — crosses down toward the bottom of this row's own
+  // band, not a short stub hugging the ring. ===
   // The true pivot sits far below the visible window (this is a shallow, wide-radius sweep), so
-  // a needle drawn all the way from it would trail a long, mostly-hidden shaft straight down
-  // through whatever sits below the rings — the now-playing text, in this layout. A real meter's
-  // needle is only ever seen near the dial face, so this one is drawn from just inside the inner
-  // ring out to just past the outer ring, not from the pivot itself.
+  // a needle length expressed as a simple fraction of R (like 0.8*R) is unreliable: because R is
+  // enormous here, a small fractional change already produces a pixel length far bigger than the
+  // row itself — the needle would run straight through the window's bottom edge. Instead we solve
+  // backwards from a DESIRED PIXEL ROW (bandBottomY) for the radius that lands the needle's base
+  // exactly there, so it reaches a consistent, intentional depth regardless of how large R is.
   const needleAngle = vuToAngle(vuLevel);
   const dirX = Math.sin(needleAngle);
   const dirY = -Math.cos(needleAngle);
   const perpX = -dirY;
   const perpY = dirX;
 
-  const needleBaseR = Rinner * 0.78;
-  const needleTipR = Router * 1.03;
-  const baseWidth = Math.max(1.4, w * 0.0022);
-  const tipWidth = Math.max(0.3, w * 0.0003);
+  const ringRowHeight = R * (1 - Math.cos(-ARC_START));
+  const desiredBaseY = bandBottomY - ringRowHeight * 0.1; // small margin above the band edge
+  const needleBaseR = (pivotY - desiredBaseY) / Math.cos(needleAngle);
+  const needleTipR = R + ringRowHeight * 0.15;
+  const needleWidth = Math.max(1.3, w * 0.00175); // thin, and the SAME at base and tip — no taper
 
   const baseX = cx + dirX * needleBaseR;
   const baseY = pivotY + dirY * needleBaseR;
   const tipX = cx + dirX * needleTipR;
   const tipY = pivotY + dirY * needleTipR;
 
-  // No drop shadow: on a needle this thin, a blurred offset shadow reads as a second, separate
-  // line right next to the real one rather than as depth — doubling each needle visually.
-  ctx.save();
   ctx.fillStyle = '#060606';
   ctx.beginPath();
-  ctx.moveTo(baseX + perpX * baseWidth, baseY + perpY * baseWidth);
-  ctx.lineTo(tipX + perpX * tipWidth, tipY + perpY * tipWidth);
-  ctx.lineTo(tipX - perpX * tipWidth, tipY - perpY * tipWidth);
-  ctx.lineTo(baseX - perpX * baseWidth, baseY - perpY * baseWidth);
+  ctx.moveTo(baseX + perpX * needleWidth, baseY + perpY * needleWidth);
+  ctx.lineTo(tipX + perpX * needleWidth, tipY + perpY * needleWidth);
+  ctx.lineTo(tipX - perpX * needleWidth, tipY - perpY * needleWidth);
+  ctx.lineTo(baseX - perpX * needleWidth, baseY - perpY * needleWidth);
   ctx.closePath();
   ctx.fill();
-  ctx.restore();
 
-  // Pivot cover (polished centre cap)
-  const pivotGrad = ctx.createRadialGradient(cx - w * 0.004, pivotY - w * 0.004, 0, cx, pivotY, w * 0.009);
-  pivotGrad.addColorStop(0, '#5a5a5a');
-  pivotGrad.addColorStop(0.5, '#1a1a1a');
-  pivotGrad.addColorStop(1, '#000000');
-  ctx.fillStyle = pivotGrad;
-  ctx.beginPath();
-  ctx.arc(cx, pivotY, w * 0.009, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Widest point of the outer ring — the row's true lowest pixel, used to stack the next row.
-  const lowestY = pivotY - Math.cos(ARC_START) * Router;
+  // Widest point of the ring — the row's true lowest pixel, used to place whatever sits below it.
+  const lowestY = pivotY - Math.cos(ARC_START) * R;
   return { lowestY };
 }
 
@@ -291,105 +259,6 @@ function drawScrews(ctx: CanvasRenderingContext2D, x: number, y: number, w: numb
   }
 }
 
-/** The whole wide McIntosh-style window: housing, one lamp-lit glass face, both channel rows. */
-function drawMeterWindow(
-  ctx: CanvasRenderingContext2D,
-  x: number, y: number, w: number, h: number,
-  vuL: number, vuR: number, nowPlaying: string
-) {
-  const cx = x + w / 2;
-  const cr = w * 0.016;
-  const bezelPad = Math.min(w, h) * 0.035;
-
-  // --- Solid matte-black housing — a real stop/flat black, not a brushed-metal highlight band ---
-  ctx.fillStyle = '#060606';
-  ctx.beginPath();
-  ctx.roundRect(x - bezelPad, y - bezelPad, w + bezelPad * 2, h + bezelPad * 2, cr + bezelPad * 0.5);
-  ctx.fill();
-
-  drawScrews(ctx, x - bezelPad, y - bezelPad, w + bezelPad * 2, h + bezelPad * 2, Math.max(2.5, w * 0.007));
-
-  ctx.strokeStyle = 'rgba(210,214,220,0.22)';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.roundRect(x - 2, y - 2, w + 4, h + 4, cr + 1);
-  ctx.stroke();
-
-  // --- Deep cobalt-blue lamp-lit glass face, shared by both rows ---
-  ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, cr);
-  ctx.clip();
-
-  // Lamp-lit base: brighter upper-centre, darker toward the bottom — a real backlit bulb
-  // casting up into curved glass, not a flat, evenly-lit panel.
-  const base = ctx.createLinearGradient(x, y, x, y + h);
-  base.addColorStop(0, '#5ab3e6');
-  base.addColorStop(0.35, '#3f96cf');
-  base.addColorStop(1, '#215f8c');
-  ctx.fillStyle = base;
-  ctx.fillRect(x, y, w, h);
-
-  // Bright lamp hotspot, upper-centre
-  const glow = ctx.createRadialGradient(cx, y + h * 0.28, 0, cx, y + h * 0.28, w * 0.5);
-  glow.addColorStop(0, 'rgba(235,250,255,0.38)');
-  glow.addColorStop(0.5, 'rgba(220,245,255,0.1)');
-  glow.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = glow;
-  ctx.fillRect(x, y, w, h);
-
-  // Real vignette: noticeably darker corners, especially the lower ones, for a convex-glass feel
-  const vignette = ctx.createRadialGradient(cx, y + h * 0.4, w * 0.3, cx, y + h * 0.4, w * 0.8);
-  vignette.addColorStop(0, 'rgba(0,0,0,0)');
-  vignette.addColorStop(1, 'rgba(5,20,35,0.45)');
-  ctx.fillStyle = vignette;
-  ctx.fillRect(x, y, w, h);
-  const bottomShade = ctx.createLinearGradient(x, y + h * 0.6, x, y + h);
-  bottomShade.addColorStop(0, 'rgba(0,0,0,0)');
-  bottomShade.addColorStop(1, 'rgba(0,10,20,0.3)');
-  ctx.fillStyle = bottomShade;
-  ctx.fillRect(x, y, w, h);
-
-  const rowTopY1 = y + h * 0.02;
-  const row1 = drawRow(ctx, x, w, rowTopY1, vuL, 'L');
-  const rowTopY2 = row1.lowestY + h * 0.03;
-  const row2 = drawRow(ctx, x, w, rowTopY2, vuR, 'R');
-
-  // Now-playing text sits inside the glass, at the bottom — where "POWER OUTPUT" sits on the
-  // real unit — in the same dark ink as the rest of the dial, not as separate white UI text.
-  const npFs = Math.max(9, Math.min(w * 0.0105, 18));
-  ctx.font = `600 ${npFs}px "Helvetica Neue", Arial, sans-serif`;
-  ctx.fillStyle = 'rgba(8,30,48,0.68)';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  const npY = Math.max(row2.lowestY + npFs * 1.6, y + h - npFs * 0.9);
-  ctx.fillText(fitText(ctx, nowPlaying, w * 0.86), cx, Math.min(npY, y + h - npFs * 0.5));
-
-  // Curved-glass sheen
-  const sweep = ctx.createLinearGradient(x, y, x + w * 0.6, y + h);
-  sweep.addColorStop(0, 'rgba(255,255,255,0.15)');
-  sweep.addColorStop(0.4, 'rgba(255,255,255,0.03)');
-  sweep.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = sweep;
-  ctx.fillRect(x, y, w, h);
-
-  const domeShade = ctx.createLinearGradient(x, y, x, y + h);
-  domeShade.addColorStop(0, 'rgba(0,0,0,0.22)');
-  domeShade.addColorStop(0.12, 'rgba(0,0,0,0)');
-  domeShade.addColorStop(0.88, 'rgba(0,0,0,0)');
-  domeShade.addColorStop(1, 'rgba(0,0,0,0.34)');
-  ctx.fillStyle = domeShade;
-  ctx.fillRect(x, y, w, h);
-
-  ctx.restore(); // end clip
-
-  ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, cr);
-  ctx.stroke();
-}
-
 /** Truncates `text` with an ellipsis so it fits within `maxWidth` at the current font. */
 function fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
   if (ctx.measureText(text).width <= maxWidth) return text;
@@ -400,6 +269,110 @@ function fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number):
     if (ctx.measureText(candidate).width <= maxWidth) lo = mid; else hi = mid - 1;
   }
   return `${text.slice(0, lo).trimEnd()}…`;
+}
+
+/** The whole wide McIntosh-style window: housing, one lamp-lit glass face, both channel rows. */
+function drawMeterWindow(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number,
+  vuL: number, vuR: number, nowPlaying: string
+) {
+  const cx = x + w / 2;
+  // Corner rounding: only the TOP corners are rounded (a small radius); the bottom corners stay
+  // square. `[topLeft, topRight, bottomRight, bottomLeft]` is the Canvas 2D roundRect order.
+  const cr = w * 0.01;
+  const bezelPad = Math.min(w, h) * 0.035;
+  const crHousing = cr + bezelPad * 0.5;
+
+  // --- Solid matte-black housing ---
+  ctx.fillStyle = '#060606';
+  ctx.beginPath();
+  ctx.roundRect(x - bezelPad, y - bezelPad, w + bezelPad * 2, h + bezelPad * 2, [crHousing, crHousing, 0, 0]);
+  ctx.fill();
+
+  drawScrews(ctx, x - bezelPad, y - bezelPad, w + bezelPad * 2, h + bezelPad * 2, Math.max(2.5, w * 0.007));
+
+  ctx.strokeStyle = 'rgba(210,214,220,0.22)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.roundRect(x - 2, y - 2, w + 4, h + 4, [cr + 1, cr + 1, 0, 0]);
+  ctx.stroke();
+
+  // --- Deep cobalt-blue lamp-lit glass face, shared by both rows ---
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, [cr, cr, 0, 0]);
+  ctx.clip();
+
+  // Lamp-lit base: the light comes from BELOW — darker upper half, brighter lower half — like a
+  // backlit bulb behind curved glass, not a flat, evenly-lit panel.
+  const base = ctx.createLinearGradient(x, y, x, y + h);
+  base.addColorStop(0, '#1d4f73');
+  base.addColorStop(0.55, '#2e74a3');
+  base.addColorStop(1, '#5fb6e8');
+  ctx.fillStyle = base;
+  ctx.fillRect(x, y, w, h);
+
+  // Bright lamp hotspot, low in the glass (the light source itself)
+  const glow = ctx.createRadialGradient(cx, y + h * 0.95, 0, cx, y + h * 0.95, w * 0.55);
+  glow.addColorStop(0, 'rgba(235,250,255,0.4)');
+  glow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(x, y, w, h);
+
+  // Vignette: darker corners, for a convex-glass feel
+  const vignette = ctx.createRadialGradient(cx, y + h * 0.4, w * 0.3, cx, y + h * 0.4, w * 0.8);
+  vignette.addColorStop(0, 'rgba(0,0,0,0)');
+  vignette.addColorStop(1, 'rgba(5,20,35,0.45)');
+  ctx.fillStyle = vignette;
+  ctx.fillRect(x, y, w, h);
+
+  // Depth line along the bottom edge of the glass
+  const depthLineY = y + h - Math.max(3, h * 0.008);
+  ctx.strokeStyle = 'rgba(5,20,35,0.5)';
+  ctx.lineWidth = Math.max(2, h * 0.004);
+  ctx.beginPath();
+  ctx.moveTo(x, depthLineY);
+  ctx.lineTo(x + w, depthLineY);
+  ctx.stroke();
+
+  // Two rows, each in its own vertical band, so the long needle of one row can never run into
+  // the ring of the other — only into the OTHER row's needle space, which is intentional (see
+  // the needle comment in `drawRow`).
+  const bandGap = h * 0.04;
+  const bandH = (h - bandGap) / 2;
+  const band1Top = y;
+  const band2Top = band1Top + bandH + bandGap;
+  const rowTopY1 = band1Top + h * 0.3;
+  const rowTopY2 = band2Top + h * 0.1;
+
+  // Fixed "MusicAssistant" title above the rings, vertically centred between the glass's top
+  // edge and the top row's arc.
+  ctx.font = `800 ${Math.max(21, w * 0.036)}px "Helvetica Neue", Arial, sans-serif`;
+  ctx.fillStyle = 'rgba(8,30,48,0.8)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('MusicAssistant', cx, (y + rowTopY1) / 2);
+
+  drawRow(ctx, x, w, rowTopY1, vuL, y + h);
+  const row2 = drawRow(ctx, x, w, rowTopY2, vuR, y + h);
+
+  // Artist – title below the bottom row, in the same dark dial ink.
+  if (nowPlaying) {
+    ctx.font = `600 ${Math.max(14, w * 0.027)}px "Helvetica Neue", Arial, sans-serif`;
+    ctx.fillStyle = 'rgba(8,30,48,0.75)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(fitText(ctx, nowPlaying, w * 0.9), cx, (row2.lowestY + (y + h)) / 2);
+  }
+
+  ctx.restore(); // end clip
+
+  ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, [cr, cr, 0, 0]);
+  ctx.stroke();
 }
 
 const VUMeterMcIntosh: VisualizerFactory = ({ container }) => {
@@ -452,11 +425,10 @@ const VUMeterMcIntosh: VisualizerFactory = ({ container }) => {
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, w, h);
 
-      // One wide window holding both channels, sized to fill the available area. The now-playing
-      // text is printed inside the glass (where "POWER OUTPUT" sits on the real unit), so no
-      // separate strip is reserved outside the housing for it any more.
+      // One wide window holding both channels, sized to fill the available area.
       const pad = Math.min(w, h) * 0.06;
-      const aspect = 1.9; // wide, landscape window; tall enough for the tightened dual rings
+      // Matches the approved preview's glass proportions (1420×560 within a 1600×700 canvas).
+      const aspect = 1420 / 560;
 
       let mW = (w - pad * 2) * Math.min(s.scale, 2);
       let mH = mW / aspect;
@@ -469,10 +441,11 @@ const VUMeterMcIntosh: VisualizerFactory = ({ container }) => {
       const clL = Math.max(-20, Math.min(3, smoothedL));
       const clR = Math.max(-20, Math.min(3, smoothedR));
 
-      // Now-playing text: artist — title, falling back to "Music Assistant"
+      // Artist – title, printed below the bottom row; left blank when nothing is playing (the
+      // fixed "MusicAssistant" title above the rings already carries the branding).
       const artist = metadata?.artist?.trim();
       const title = metadata?.title?.trim();
-      const nowPlaying = title || artist ? [artist, title].filter(Boolean).join(' — ') : 'Music Assistant';
+      const nowPlaying = [artist, title].filter(Boolean).join(' – ');
 
       drawMeterWindow(ctx, sx, sy, mW, mH, clL, clR, nowPlaying);
     },
