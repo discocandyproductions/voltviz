@@ -231,34 +231,6 @@ function drawRow(
   return { lowestY };
 }
 
-/** Four small Phillips-head screws, one near each corner of the housing. */
-function drawScrews(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  const insetX = r * 2.2;
-  const insetY = r * 2.2;
-  const positions: Array<[number, number]> = [
-    [x + insetX, y + insetY],
-    [x + w - insetX, y + insetY],
-    [x + insetX, y + h - insetY],
-    [x + w - insetX, y + h - insetY],
-  ];
-  for (const [sx, sy] of positions) {
-    const grad = ctx.createRadialGradient(sx - r * 0.3, sy - r * 0.3, 0, sx, sy, r);
-    grad.addColorStop(0, '#b9bec4');
-    grad.addColorStop(0.5, '#6b6f74');
-    grad.addColorStop(1, '#202224');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(sx, sy, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-    ctx.lineWidth = Math.max(0.6, r * 0.22);
-    ctx.beginPath();
-    ctx.moveTo(sx - r * 0.55, sy);
-    ctx.lineTo(sx + r * 0.55, sy);
-    ctx.stroke();
-  }
-}
-
 /** Truncates `text` with an ellipsis so it fits within `maxWidth` at the current font. */
 function fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
   if (ctx.measureText(text).width <= maxWidth) return text;
@@ -289,8 +261,6 @@ function drawMeterWindow(
   ctx.beginPath();
   ctx.roundRect(x - bezelPad, y - bezelPad, w + bezelPad * 2, h + bezelPad * 2, [crHousing, crHousing, 0, 0]);
   ctx.fill();
-
-  drawScrews(ctx, x - bezelPad, y - bezelPad, w + bezelPad * 2, h + bezelPad * 2, Math.max(2.5, w * 0.007));
 
   ctx.strokeStyle = 'rgba(210,214,220,0.22)';
   ctx.lineWidth = 1.5;
