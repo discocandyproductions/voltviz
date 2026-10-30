@@ -9,6 +9,7 @@ interface VisualizerEntry {
 // Single source of truth for all visualizers: the id union, the module map and
 // the picker labels/order are all derived from this list (newest first).
 export const visualizers = [
+  { id: 'vumetermcintosh', name: 'VU Meter (McIntosh)', module: 'VUMeterMcIntosh' },
   { id: 'pulsar', name: 'Pulsar (WebGPU)', module: 'Pulsar' },
   { id: 'oscilloscope', name: 'Oscilloscope (WebGPU)', module: 'Oscilloscope' },
   { id: 'daybreak', name: 'Daybreak (WebGPU)', module: 'Daybreak' },
