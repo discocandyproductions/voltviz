@@ -13,8 +13,9 @@ import type { VisualizerFactory } from '../runtime/types';
 // --- VU meter arc geometry (angles from vertical in radians, negative = left) ---
 // A shallow sweep (narrow angle range) so the scale reads almost edge-to-edge across a wide
 // window with modest vertical rise, like a real meter's needle pivoting far below the dial.
-const ARC_START_DEG = -34;
-const ARC_END_DEG = 26;
+// Symmetric around 0° so the curve itself — not just its bounding box — sits visually centered.
+const ARC_START_DEG = -30;
+const ARC_END_DEG = 30;
 const ARC_START = (ARC_START_DEG * Math.PI) / 180;
 const ARC_END = (ARC_END_DEG * Math.PI) / 180;
 const ARC_SPAN = ARC_END - ARC_START;
@@ -140,8 +141,8 @@ function drawRow(
   vuLevel: number, chLabel: string, caption: string | null, refWatts: number
 ): { lowestY: number } {
   const red = 'hsl(353, 82%, 52%)';
-  const fsCaption = Math.max(9, Math.min(w * 0.0095, 17));
-  const fsLabel = Math.max(7, Math.min(w * 0.0068, 13));
+  const fsCaption = Math.max(10, Math.min(w * 0.0125, 24));
+  const fsLabel = Math.max(9, Math.min(w * 0.0095, 19));
 
   let contentTop = topY;
   if (caption) {
@@ -204,11 +205,9 @@ function drawRow(
   const tipX = cx + dirX * needleLen;
   const tipY = pivotY + dirY * needleLen;
 
+  // No drop shadow: on a needle this thin, a blurred offset shadow reads as a second, separate
+  // line right next to the real one rather than as depth — doubling each needle visually.
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.45)';
-  ctx.shadowBlur = 3;
-  ctx.shadowOffsetX = 1;
-  ctx.shadowOffsetY = 1.5;
   ctx.fillStyle = '#060606';
   ctx.beginPath();
   ctx.moveTo(cx + perpX * baseWidth, pivotY + perpY * baseWidth);
