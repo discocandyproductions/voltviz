@@ -20,18 +20,7 @@ const ARC_START = (ARC_START_DEG * Math.PI) / 180;
 const ARC_END = (ARC_END_DEG * Math.PI) / 180;
 const ARC_SPAN = ARC_END - ARC_START;
 
-function vuToPercent(vu: number): number {
-  return Math.pow(10, vu / 20) * 100;
-}
-
-const MAX_PCT = vuToPercent(3); // ~141.25%
-
-function vuToAngle(vu: number): number {
-  const pct = vuToPercent(Math.max(-50, Math.min(4, vu)));
-  return ARC_START + (pct / MAX_PCT) * ARC_SPAN;
-}
-
-// --- Printed scale graduation (separate from the needle's true log curve) ---
+// --- Printed scale graduation ---
 // A real meter's needle follows a log response, but its printed tick marks are drawn evenly
 // spaced across the dial face — not crowded together the way a strict log scale would put them.
 // Five equal 10 dB steps (-50..0), then a smaller 0.3x step out to the +3 dB headroom mark —
@@ -50,6 +39,26 @@ function computeTickAngles(): number[] {
   return angles;
 }
 const TICK_ANGLES = computeTickAngles();
+
+/**
+ * The needle's angle for a given VU/dB level — interpolated along the SAME evenly-fanned scale
+ * as the printed tick marks (not a separate true-log curve). Using a different curve for the
+ * needle than for the graduation it points at used to pull them far apart (e.g. the true-log
+ * angle for -20 dB sits barely past the scale's start, while the printed "-20" tick sits past
+ * the middle), so the needle never pointed at the number matching its own level.
+ */
+function vuToAngle(vu: number): number {
+  const v = Math.max(DB_MARKS[0], Math.min(DB_MARKS[DB_MARKS.length - 1], vu));
+  for (let i = 0; i < DB_MARKS.length - 1; i++) {
+    const a = DB_MARKS[i];
+    const b = DB_MARKS[i + 1];
+    if (v <= b) {
+      const t = (v - a) / (b - a);
+      return TICK_ANGLES[i] + t * (TICK_ANGLES[i + 1] - TICK_ANGLES[i]);
+    }
+  }
+  return TICK_ANGLES[TICK_ANGLES.length - 1];
+}
 
 /**
  * The watts-equivalent label for a dB mark (outer ring), e.g. -20 dB -> "1.5" (at a 150 W
@@ -142,7 +151,10 @@ function drawRow(
 ): { lowestY: number } {
   const red = 'hsl(353, 82%, 52%)';
   const fsCaption = Math.max(10, Math.min(w * 0.0125, 24));
-  const fsLabel = Math.max(9, Math.min(w * 0.0095, 19));
+  // The WATTS numbers read clearly larger than the DECIBELS numbers in the reference photo
+  // (roughly double) — not the same size, which is what made the two rings look flat/equal.
+  const fsOuter = Math.max(12, Math.min(w * 0.0145, 28));
+  const fsInner = Math.max(8, Math.min(w * 0.0078, 15));
 
   let contentTop = topY;
   if (caption) {
@@ -153,23 +165,25 @@ function drawRow(
     ctx.fillText(caption, x + w / 2, contentTop + fsCaption);
     contentTop += fsCaption * 1.55;
   }
-  const wattsLabelSpace = fsLabel * 1.7;
+  const wattsLabelSpace = fsOuter * 1.6;
   const arcApexY = contentTop + wattsLabelSpace;
 
   const { R: Router, pivotY, cx } = fitRow(x, w, arcApexY, 0.88);
   // The pivot sits far below the row (shallow, wide sweep), so a smaller radius sharing that
   // same pivot would collapse toward it instead of nesting next to the outer ring. A small,
   // fixed pixel gap (not a ratio of R) keeps the inner ring visually just inside the outer one.
-  const ringGap = fsLabel * 5.2;
+  const ringGap = fsOuter * 3.2 + fsInner * 1.6;
   const Rinner = Router - ringGap;
 
   const dbLabels = ['-50', '-40', '-30', '-20', '-10', '0', '+3'];
   const wLabels = DB_MARKS.map(v => wattsLabel(v, refWatts));
 
-  drawDashedRing(ctx, cx, pivotY, Router, TICK_ANGLES, Math.max(2.4, w * 0.0042), red);
-  drawDashedRing(ctx, cx, pivotY, Rinner, TICK_ANGLES, Math.max(2.0, w * 0.0034), red);
+  // Both rings read the same, fairly thin stroke weight — the reference doesn't make the outer
+  // ring noticeably heavier than the inner one, the way an earlier pass here did.
+  const ringLineWidth = Math.max(1.8, w * 0.0028);
+  drawDashedRing(ctx, cx, pivotY, Router, TICK_ANGLES, ringLineWidth, red);
+  drawDashedRing(ctx, cx, pivotY, Rinner, TICK_ANGLES, ringLineWidth, red);
 
-  ctx.font = `600 ${fsLabel}px "Helvetica Neue", Arial, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   for (let i = 0; i < TICK_ANGLES.length; i++) {
@@ -178,18 +192,20 @@ function drawRow(
     const cos = Math.cos(a);
     const isRed = DB_MARKS[i] >= 1;
     ctx.fillStyle = isRed ? red : '#0c2d44';
-    const lrOuter = Router + fsLabel * 1.15;
+    ctx.font = `600 ${fsOuter}px "Helvetica Neue", Arial, sans-serif`;
+    const lrOuter = Router + fsOuter * 0.95;
     ctx.fillText(wLabels[i], cx + sin * lrOuter, pivotY - cos * lrOuter);
-    const lrInner = Rinner + ringGap * 0.42;
+    ctx.font = `600 ${fsInner}px "Helvetica Neue", Arial, sans-serif`;
+    const lrInner = Rinner + fsInner * 1.1;
     ctx.fillText(dbLabels[i], cx + sin * lrInner, pivotY - cos * lrInner);
   }
 
   // Channel label at the left edge of the row
-  ctx.font = `bold ${fsLabel * 1.3}px "Helvetica Neue", Arial, sans-serif`;
+  ctx.font = `bold ${fsOuter * 0.85}px "Helvetica Neue", Arial, sans-serif`;
   ctx.fillStyle = 'rgba(12,45,68,0.75)';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText(chLabel, x + w * 0.012, arcApexY + fsLabel * 1.2);
+  ctx.fillText(chLabel, x + w * 0.012, arcApexY + fsOuter * 0.8);
 
   // === NEEDLE (tapered, like a real meter pointer), crossing through both rings ===
   const needleAngle = vuToAngle(vuLevel);
