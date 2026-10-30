@@ -69,7 +69,7 @@ function drawRow(
   vuLevel: number, chLabel: string
 ) {
   const { R, pivotY, cx } = fitRow(x, w, rowTopY, 0.94);
-  const fs = Math.max(8, Math.min(w * 0.011, 13));
+  const fs = Math.max(8, Math.min(w * 0.011, 20));
   const red = 'hsl(353, 82%, 52%)';
 
   const dbMarks = [
@@ -82,8 +82,10 @@ function drawRow(
   ];
 
   // Thick dashed scale arc — a short gap under each number, like a real meter's printed
-  // graduation — instead of a thin line with small perpendicular ticks.
-  const gapDeg = 1.6;
+  // graduation — instead of a thin line with small perpendicular ticks. The VU scale is
+  // logarithmic, so segments near 0 dB are angularly much narrower than the ones at the ends;
+  // the gap is sized per segment (never more than a third of it) so a narrow segment still
+  // shows a visible dash instead of being eaten alive by a fixed-size gap.
   ctx.lineWidth = Math.max(3, w * 0.0055);
   ctx.lineCap = 'butt';
   for (let i = 0; i < dbMarks.length - 1; i++) {
@@ -91,6 +93,8 @@ function drawRow(
     const to = dbMarks[i + 1].vu;
     const isRed = from >= 0;
     ctx.strokeStyle = isRed ? red : '#0c2d44';
+    const segDeg = (vuToAngle(to) - vuToAngle(from)) * (180 / Math.PI);
+    const gapDeg = Math.min(1.2, segDeg * 0.16);
     const aFrom = (vuToAngle(from) * 180) / Math.PI + gapDeg;
     const aTo = (vuToAngle(to) * 180) / Math.PI - gapDeg;
     ctx.beginPath();
