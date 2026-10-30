@@ -214,28 +214,36 @@ function drawRow(
   ctx.fillText(chLabel, x + w * 0.012, arcApexY + fsOuter * 0.8);
 
   // === NEEDLE (tapered, like a real meter pointer), crossing through both rings ===
+  // The true pivot sits far below the visible window (this is a shallow, wide-radius sweep), so
+  // a needle drawn all the way from it would trail a long, mostly-hidden shaft straight down
+  // through whatever sits below the rings — the now-playing text, in this layout. A real meter's
+  // needle is only ever seen near the dial face, so this one is drawn from just inside the inner
+  // ring out to just past the outer ring, not from the pivot itself.
   const needleAngle = vuToAngle(vuLevel);
   const dirX = Math.sin(needleAngle);
   const dirY = -Math.cos(needleAngle);
   const perpX = -dirY;
   const perpY = dirX;
 
-  const needleLen = Router * 1.03;
+  const needleBaseR = Rinner * 0.78;
+  const needleTipR = Router * 1.03;
   const baseWidth = Math.max(1.4, w * 0.0022);
   const tipWidth = Math.max(0.3, w * 0.0003);
 
-  const tipX = cx + dirX * needleLen;
-  const tipY = pivotY + dirY * needleLen;
+  const baseX = cx + dirX * needleBaseR;
+  const baseY = pivotY + dirY * needleBaseR;
+  const tipX = cx + dirX * needleTipR;
+  const tipY = pivotY + dirY * needleTipR;
 
   // No drop shadow: on a needle this thin, a blurred offset shadow reads as a second, separate
   // line right next to the real one rather than as depth — doubling each needle visually.
   ctx.save();
   ctx.fillStyle = '#060606';
   ctx.beginPath();
-  ctx.moveTo(cx + perpX * baseWidth, pivotY + perpY * baseWidth);
+  ctx.moveTo(baseX + perpX * baseWidth, baseY + perpY * baseWidth);
   ctx.lineTo(tipX + perpX * tipWidth, tipY + perpY * tipWidth);
   ctx.lineTo(tipX - perpX * tipWidth, tipY - perpY * tipWidth);
-  ctx.lineTo(cx - perpX * baseWidth, pivotY - perpY * baseWidth);
+  ctx.lineTo(baseX - perpX * baseWidth, baseY - perpY * baseWidth);
   ctx.closePath();
   ctx.fill();
   ctx.restore();
