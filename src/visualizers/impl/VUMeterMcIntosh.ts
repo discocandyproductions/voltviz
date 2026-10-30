@@ -9,8 +9,10 @@ import { mountCanvas2D } from '../lib/canvas2d';
 import type { VisualizerFactory } from '../runtime/types';
 
 // --- VU meter arc geometry (angles from vertical in radians, negative = left) ---
-const ARC_START_DEG = -58;
-const ARC_END_DEG = 46;
+// A shallow sweep (narrow angle range) so the scale reads almost edge-to-edge across a wide
+// window with modest vertical rise, like a real meter's needle pivoting far below the dial.
+const ARC_START_DEG = -34;
+const ARC_END_DEG = 26;
 const ARC_START = (ARC_START_DEG * Math.PI) / 180;
 const ARC_END = (ARC_END_DEG * Math.PI) / 180;
 const ARC_SPAN = ARC_END - ARC_START;
@@ -47,52 +49,28 @@ function scanArcBounds(): { minF: number; maxF: number; minSin: number; maxSin: 
 }
 const ARC_BOUNDS = scanArcBounds();
 
-/** Pivot point and radius that fit the swept arc inside [x, x+w] × [rowTopY, rowTopY+rowH]. */
-function fitRow(
-  x: number, w: number, rowTopY: number, rowH: number, widthFill: number, heightFill: number
-): { R: number; pivotY: number; cx: number } {
-  const { minF, maxF, minSin, maxSin } = ARC_BOUNDS;
-  const Rw = (w * widthFill) / (maxSin - minSin);
-  const Rh = (rowH * heightFill) / (maxF - minF);
-  const R = Math.min(Rw, Rh);
-  const pivotY = rowTopY + rowH * heightFill - minF * R - (rowH * (1 - heightFill));
+/**
+ * Pivot point and radius so the swept arc spans `widthFill` of the row's width, almost
+ * edge-to-edge like a real meter. Width drives the size; the caller sizes `rowH` generously
+ * enough (see `drawMeterWindow`) to hold the resulting — fairly shallow — vertical rise.
+ */
+function fitRow(x: number, w: number, rowTopY: number, widthFill: number): { R: number; pivotY: number; cx: number } {
+  const { minF, minSin, maxSin } = ARC_BOUNDS;
+  const R = (w * widthFill) / (maxSin - minSin);
+  const pivotY = rowTopY - minF * R; // the apex (minF) sits at rowTopY
   const cx = x + w / 2 - ((minSin + maxSin) / 2) * R;
   return { R, pivotY, cx };
-}
-
-function drawArc(
-  ctx: CanvasRenderingContext2D,
-  cx: number, py: number, r: number,
-  from: number, to: number, steps: number
-) {
-  ctx.beginPath();
-  for (let i = 0; i <= steps; i++) {
-    const v = from + (i / steps) * (to - from);
-    const a = vuToAngle(v);
-    const x = cx + Math.sin(a) * r;
-    const y = py - Math.cos(a) * r;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
 }
 
 /** One channel's VU scale + needle, fitted into a horizontal row of the shared glass. */
 function drawRow(
   ctx: CanvasRenderingContext2D,
-  x: number, w: number, rowTopY: number, rowH: number,
+  x: number, w: number, rowTopY: number,
   vuLevel: number, chLabel: string
 ) {
-  const { R, pivotY, cx } = fitRow(x, w, rowTopY, rowH, 0.84, 0.72);
-  const fs = Math.max(8, Math.min(w * 0.014, 15));
+  const { R, pivotY, cx } = fitRow(x, w, rowTopY, 0.94);
+  const fs = Math.max(8, Math.min(w * 0.011, 13));
   const red = 'hsl(353, 82%, 52%)';
-
-  ctx.strokeStyle = '#061018';
-  ctx.lineWidth = Math.max(1.3, w * 0.0018);
-  drawArc(ctx, cx, pivotY, R, -20, 0, 60);
-
-  ctx.strokeStyle = red;
-  ctx.lineWidth = Math.max(1.6, w * 0.0022);
-  drawArc(ctx, cx, pivotY, R, 0, 3, 30);
 
   const dbMarks = [
     { vu: -20, label: '20' }, { vu: -10, label: '10' },
@@ -103,8 +81,32 @@ function drawRow(
     { vu: 3, label: '3' },
   ];
 
-  const tick = R * 0.035;
-  ctx.font = `bold ${fs}px "Helvetica Neue", Arial, sans-serif`;
+  // Thick dashed scale arc — a short gap under each number, like a real meter's printed
+  // graduation — instead of a thin line with small perpendicular ticks.
+  const gapDeg = 1.6;
+  ctx.lineWidth = Math.max(3, w * 0.0055);
+  ctx.lineCap = 'butt';
+  for (let i = 0; i < dbMarks.length - 1; i++) {
+    const from = dbMarks[i].vu;
+    const to = dbMarks[i + 1].vu;
+    const isRed = from >= 0;
+    ctx.strokeStyle = isRed ? red : '#0c2d44';
+    const aFrom = (vuToAngle(from) * 180) / Math.PI + gapDeg;
+    const aTo = (vuToAngle(to) * 180) / Math.PI - gapDeg;
+    ctx.beginPath();
+    const steps = 12;
+    for (let s = 0; s <= steps; s++) {
+      const deg = aFrom + (s / steps) * (aTo - aFrom);
+      const a = (deg * Math.PI) / 180;
+      const px = cx + Math.sin(a) * R;
+      const py = pivotY - Math.cos(a) * R;
+      if (s === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+  ctx.lineCap = 'round';
+
+  ctx.font = `600 ${fs}px "Helvetica Neue", Arial, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
@@ -113,28 +115,9 @@ function drawRow(
     const sin = Math.sin(a);
     const cos = Math.cos(a);
     const isRed = m.vu >= 1;
-
-    ctx.strokeStyle = isRed ? red : '#061018';
-    ctx.lineWidth = Math.max(1, w * 0.0014);
-    ctx.beginPath();
-    ctx.moveTo(cx + sin * R, pivotY - cos * R);
-    ctx.lineTo(cx + sin * (R - tick), pivotY - cos * (R - tick));
-    ctx.stroke();
-
-    const lr = R + fs * 0.85;
+    const lr = R + fs * 1.1;
     ctx.fillStyle = isRed ? red : '#0c2d44';
     ctx.fillText(m.label, cx + sin * lr, pivotY - cos * lr);
-  }
-
-  for (const vu of [-15, -8, -6, -4, -0.5, 0.5, 1.5, 2.5]) {
-    const a = vuToAngle(vu);
-    const isRed = vu > 0;
-    ctx.strokeStyle = isRed ? red : '#061018';
-    ctx.lineWidth = Math.max(0.5, w * 0.0009);
-    ctx.beginPath();
-    ctx.moveTo(cx + Math.sin(a) * R, pivotY - Math.cos(a) * R);
-    ctx.lineTo(cx + Math.sin(a) * (R - tick * 0.5), pivotY - Math.cos(a) * (R - tick * 0.5));
-    ctx.stroke();
   }
 
   // Channel label at the left edge of the row
@@ -142,7 +125,7 @@ function drawRow(
   ctx.fillStyle = 'rgba(12,45,68,0.8)';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText(chLabel, x + w * 0.012, rowTopY + rowH * 0.5);
+  ctx.fillText(chLabel, x + w * 0.012, rowTopY + fs * 1.2);
 
   // === NEEDLE (tapered, like a real meter pointer) ===
   const needleAngle = vuToAngle(vuLevel);
@@ -271,13 +254,13 @@ function drawMeterWindow(
   ctx.fillStyle = vignette;
   ctx.fillRect(x, y, w, h);
 
-  const rowH = h * 0.36;
+  const rowH = h * 0.44;
   const gap = h * 0.08;
-  const rowTopY1 = y + h * 0.07;
+  const rowTopY1 = y + h * 0.045;
   const rowTopY2 = rowTopY1 + rowH + gap;
 
-  drawRow(ctx, x, w, rowTopY1, rowH, vuL, 'L');
-  drawRow(ctx, x, w, rowTopY2, rowH, vuR, 'R');
+  drawRow(ctx, x, w, rowTopY1, vuL, 'L');
+  drawRow(ctx, x, w, rowTopY2, vuR, 'R');
 
   // Curved-glass sheen
   const sweep = ctx.createLinearGradient(x, y, x + w * 0.6, y + h);
