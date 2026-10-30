@@ -3,10 +3,11 @@
 ## [Unreleased]
 
 ### Added
-- **VU Meter (McIntosh)**: a McIntosh-amplifier-style variant of the VU Meter — black
-  housing, blue-lit meter faces, fine black needles — with the current Sendspin track
-  (artist / title) printed below the meters, falling back to "Music Assistant" when no
-  track info is available.
+- **VU Meter (McIntosh)**: a McIntosh-amplifier-style variant of the VU Meter — a single wide
+  brushed-metal housing with one lamp-lit glass face holding both channels (L / R), each with
+  a real power-meter's dual scale (an outer WATTS ring and an inner DECIBELS ring read by one
+  tapered needle) — with the current Sendspin track (artist / title) printed below the glass,
+  falling back to "Music Assistant" when no track info is available.
 
 ## [0.35.1] - 2026-10-17
 

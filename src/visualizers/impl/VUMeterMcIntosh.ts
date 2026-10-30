@@ -2,8 +2,10 @@
  * VU Meter (McIntosh) — a Canvas 2D visualizer. Same ballistic VU math as `VUMeter`, restyled
  * as a single McIntosh-style wide meter window: brushed-metal housing with corner screws, one
  * deep cobalt-blue lamp-lit glass face holding both channels as stacked rows (L on top, R
- * below), tapered black needles, and the current Sendspin track (artist / title) printed below
- * the glass, falling back to "Music Assistant" when no track info is available.
+ * below). Each row carries a real power-meter's dual scale — an outer WATTS ring and an inner
+ * DECIBELS ring, both read by one tapered needle — plus the current Sendspin track (artist /
+ * title) printed below the glass, falling back to "Music Assistant" when no track info is
+ * available.
  */
 import { mountCanvas2D } from '../lib/canvas2d';
 import type { VisualizerFactory } from '../runtime/types';
@@ -26,6 +28,40 @@ const MAX_PCT = vuToPercent(3); // ~141.25%
 function vuToAngle(vu: number): number {
   const pct = vuToPercent(Math.max(-50, Math.min(4, vu)));
   return ARC_START + (pct / MAX_PCT) * ARC_SPAN;
+}
+
+// --- Printed scale graduation (separate from the needle's true log curve) ---
+// A real meter's needle follows a log response, but its printed tick marks are drawn evenly
+// spaced across the dial face — not crowded together the way a strict log scale would put them.
+// Five equal 10 dB steps (-50..0), then a smaller 0.3x step out to the +3 dB headroom mark —
+// mirrors the reference photo, where the -50..0 ticks are evenly fanned and the +3 overload tick
+// sits closer to 0 than a full 10 dB step away.
+const DB_MARKS = [-50, -40, -30, -20, -10, 0, 3];
+const TICK_WEIGHTS = [1, 1, 1, 1, 1, 0.3];
+const TICK_WEIGHT_SUM = TICK_WEIGHTS.reduce((a, b) => a + b, 0);
+function computeTickAngles(): number[] {
+  const angles = [ARC_START];
+  let acc = 0;
+  for (const wgt of TICK_WEIGHTS) {
+    acc += wgt;
+    angles.push(ARC_START + (acc / TICK_WEIGHT_SUM) * ARC_SPAN);
+  }
+  return angles;
+}
+const TICK_ANGLES = computeTickAngles();
+
+/**
+ * The watts-equivalent label for a dB mark (outer ring), e.g. -20 dB -> "1.5" (at a 150 W
+ * reference). The +3 dB headroom mark is shown as a clean doubling (e.g. "300"), matching how
+ * McIntosh actually labels it, rather than the slightly-off 10^0.3 result (299.25).
+ */
+function wattsLabel(db: number, refWatts: number): string {
+  if (db === 3) return `${Math.round(refWatts * 2)}`;
+  const watts = refWatts * Math.pow(10, db / 10);
+  if (watts >= 10) return `${Math.round(watts)}`;
+  if (watts >= 1) return `${Math.round(watts * 10) / 10}`;
+  if (watts >= 0.1) return `.${Math.round(watts * 100)}`;
+  return `${Math.round(watts * 1000 * 10) / 10}m`;
 }
 
 /**
@@ -62,46 +98,27 @@ function fitRow(x: number, w: number, rowTopY: number, widthFill: number): { R: 
   return { R, pivotY, cx };
 }
 
-/** One channel's VU scale + needle, fitted into a horizontal row of the shared glass. */
-function drawRow(
+/** Draws one dashed ring (either the outer WATTS or the inner DECIBELS scale) along `angles`. */
+function drawDashedRing(
   ctx: CanvasRenderingContext2D,
-  x: number, w: number, rowTopY: number,
-  vuLevel: number, chLabel: string
+  cx: number, pivotY: number, R: number,
+  angles: number[], lineWidth: number, red: string
 ) {
-  const { R, pivotY, cx } = fitRow(x, w, rowTopY, 0.94);
-  const fs = Math.max(8, Math.min(w * 0.011, 20));
-  const red = 'hsl(353, 82%, 52%)';
-
-  const dbMarks = [
-    { vu: -20, label: '20' }, { vu: -10, label: '10' },
-    { vu: -7, label: '7' }, { vu: -5, label: '5' },
-    { vu: -3, label: '3' }, { vu: -2, label: '2' },
-    { vu: -1, label: '1' }, { vu: 0, label: '0' },
-    { vu: 1, label: '1' }, { vu: 2, label: '2' },
-    { vu: 3, label: '3' },
-  ];
-
-  // Thick dashed scale arc — a short gap under each number, like a real meter's printed
-  // graduation — instead of a thin line with small perpendicular ticks. The VU scale is
-  // logarithmic, so segments near 0 dB are angularly much narrower than the ones at the ends;
-  // the gap is sized per segment (never more than a third of it) so a narrow segment still
-  // shows a visible dash instead of being eaten alive by a fixed-size gap.
-  ctx.lineWidth = Math.max(3, w * 0.0055);
+  ctx.lineWidth = lineWidth;
   ctx.lineCap = 'butt';
-  for (let i = 0; i < dbMarks.length - 1; i++) {
-    const from = dbMarks[i].vu;
-    const to = dbMarks[i + 1].vu;
-    const isRed = from >= 0;
+  for (let i = 0; i < angles.length - 1; i++) {
+    const aFromRaw = angles[i];
+    const aToRaw = angles[i + 1];
+    const isRed = DB_MARKS[i] >= 0;
     ctx.strokeStyle = isRed ? red : '#0c2d44';
-    const segDeg = (vuToAngle(to) - vuToAngle(from)) * (180 / Math.PI);
-    const gapDeg = Math.min(1.2, segDeg * 0.16);
-    const aFrom = (vuToAngle(from) * 180) / Math.PI + gapDeg;
-    const aTo = (vuToAngle(to) * 180) / Math.PI - gapDeg;
+    const segDeg = (aToRaw - aFromRaw) * (180 / Math.PI);
+    const gapRad = (Math.min(1.0, segDeg * 0.1) * Math.PI) / 180;
+    const aFrom = aFromRaw + gapRad;
+    const aTo = aToRaw - gapRad;
     ctx.beginPath();
-    const steps = 12;
+    const steps = 16;
     for (let s = 0; s <= steps; s++) {
-      const deg = aFrom + (s / steps) * (aTo - aFrom);
-      const a = (deg * Math.PI) / 180;
+      const a = aFrom + (s / steps) * (aTo - aFrom);
       const px = cx + Math.sin(a) * R;
       const py = pivotY - Math.cos(a) * R;
       if (s === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
@@ -109,36 +126,78 @@ function drawRow(
     ctx.stroke();
   }
   ctx.lineCap = 'round';
+}
 
-  ctx.font = `600 ${fs}px "Helvetica Neue", Arial, sans-serif`;
+/**
+ * One channel's dual-ring scale + needle, fitted into a horizontal row of the shared glass —
+ * an outer WATTS ring and an inner DECIBELS ring, both read by the same needle, like the real
+ * McIntosh power-output meter. `caption` ('WATTS' / 'DECIBELS' / null) prints above the row.
+ * Returns the row's lowest drawn pixel so the caller can stack the next row below it.
+ */
+function drawRow(
+  ctx: CanvasRenderingContext2D,
+  x: number, w: number, topY: number,
+  vuLevel: number, chLabel: string, caption: string | null, refWatts: number
+): { lowestY: number } {
+  const red = 'hsl(353, 82%, 52%)';
+  const fsCaption = Math.max(9, Math.min(w * 0.0095, 17));
+  const fsLabel = Math.max(7, Math.min(w * 0.0068, 13));
+
+  let contentTop = topY;
+  if (caption) {
+    ctx.font = `600 ${fsCaption}px "Helvetica Neue", Arial, sans-serif`;
+    ctx.fillStyle = 'rgba(12,45,68,0.85)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(caption, x + w / 2, contentTop + fsCaption);
+    contentTop += fsCaption * 1.55;
+  }
+  const wattsLabelSpace = fsLabel * 1.7;
+  const arcApexY = contentTop + wattsLabelSpace;
+
+  const { R: Router, pivotY, cx } = fitRow(x, w, arcApexY, 0.88);
+  // The pivot sits far below the row (shallow, wide sweep), so a smaller radius sharing that
+  // same pivot would collapse toward it instead of nesting next to the outer ring. A small,
+  // fixed pixel gap (not a ratio of R) keeps the inner ring visually just inside the outer one.
+  const ringGap = fsLabel * 5.2;
+  const Rinner = Router - ringGap;
+
+  const dbLabels = ['-50', '-40', '-30', '-20', '-10', '0', '+3'];
+  const wLabels = DB_MARKS.map(v => wattsLabel(v, refWatts));
+
+  drawDashedRing(ctx, cx, pivotY, Router, TICK_ANGLES, Math.max(2.4, w * 0.0042), red);
+  drawDashedRing(ctx, cx, pivotY, Rinner, TICK_ANGLES, Math.max(2.0, w * 0.0034), red);
+
+  ctx.font = `600 ${fsLabel}px "Helvetica Neue", Arial, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-
-  for (const m of dbMarks) {
-    const a = vuToAngle(m.vu);
+  for (let i = 0; i < TICK_ANGLES.length; i++) {
+    const a = TICK_ANGLES[i];
     const sin = Math.sin(a);
     const cos = Math.cos(a);
-    const isRed = m.vu >= 1;
-    const lr = R + fs * 1.1;
+    const isRed = DB_MARKS[i] >= 1;
     ctx.fillStyle = isRed ? red : '#0c2d44';
-    ctx.fillText(m.label, cx + sin * lr, pivotY - cos * lr);
+    const lrOuter = Router + fsLabel * 1.15;
+    ctx.fillText(wLabels[i], cx + sin * lrOuter, pivotY - cos * lrOuter);
+    const lrInner = Rinner + ringGap * 0.42;
+    ctx.fillText(dbLabels[i], cx + sin * lrInner, pivotY - cos * lrInner);
   }
 
   // Channel label at the left edge of the row
-  ctx.font = `bold ${fs * 1.3}px "Helvetica Neue", Arial, sans-serif`;
-  ctx.fillStyle = 'rgba(12,45,68,0.8)';
+  ctx.font = `bold ${fsLabel * 1.3}px "Helvetica Neue", Arial, sans-serif`;
+  ctx.fillStyle = 'rgba(12,45,68,0.75)';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText(chLabel, x + w * 0.012, rowTopY + fs * 1.2);
+  ctx.fillText(chLabel, x + w * 0.012, arcApexY + fsLabel * 1.2);
 
-  // === NEEDLE (tapered, like a real meter pointer) ===
+  // === NEEDLE (tapered, like a real meter pointer), crossing through both rings ===
   const needleAngle = vuToAngle(vuLevel);
   const dirX = Math.sin(needleAngle);
   const dirY = -Math.cos(needleAngle);
   const perpX = -dirY;
   const perpY = dirX;
 
-  const needleLen = R * 1.02;
+  const needleLen = Router * 1.03;
   const baseWidth = Math.max(1.4, w * 0.0022);
   const tipWidth = Math.max(0.3, w * 0.0003);
 
@@ -169,6 +228,10 @@ function drawRow(
   ctx.beginPath();
   ctx.arc(cx, pivotY, w * 0.009, 0, Math.PI * 2);
   ctx.fill();
+
+  // Widest point of the outer ring — the row's true lowest pixel, used to stack the next row.
+  const lowestY = pivotY - Math.cos(ARC_START) * Router;
+  return { lowestY };
 }
 
 /** Four small Phillips-head screws, one near each corner of the housing. */
@@ -258,13 +321,10 @@ function drawMeterWindow(
   ctx.fillStyle = vignette;
   ctx.fillRect(x, y, w, h);
 
-  const rowH = h * 0.44;
-  const gap = h * 0.08;
-  const rowTopY1 = y + h * 0.045;
-  const rowTopY2 = rowTopY1 + rowH + gap;
-
-  drawRow(ctx, x, w, rowTopY1, vuL, 'L');
-  drawRow(ctx, x, w, rowTopY2, vuR, 'R');
+  const rowTopY1 = y + h * 0.015;
+  const row1 = drawRow(ctx, x, w, rowTopY1, vuL, 'L', 'WATTS', 150);
+  const rowTopY2 = row1.lowestY + h * 0.035;
+  drawRow(ctx, x, w, rowTopY2, vuR, 'R', 'DECIBELS', 150);
 
   // Curved-glass sheen
   const sweep = ctx.createLinearGradient(x, y, x + w * 0.6, y + h);
@@ -359,7 +419,7 @@ const VUMeterMcIntosh: VisualizerFactory = ({ container }) => {
 
       // One wide window holding both channels, sized to fill the available area
       const pad = Math.min(w, meterAreaH) * 0.06;
-      const aspect = 2.5; // wide, landscape window like a real amplifier meter
+      const aspect = 2.15; // wide, landscape window; taller than before to fit the dual watts/dB rings
 
       let mW = (w - pad * 2) * Math.min(s.scale, 2);
       let mH = mW / aspect;
