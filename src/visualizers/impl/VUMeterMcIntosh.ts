@@ -1,11 +1,12 @@
 /**
  * VU Meter (McIntosh) — a Canvas 2D visualizer. Same ballistic VU math as `VUMeter`, restyled
- * as a single McIntosh-style wide meter window: brushed-metal housing with corner screws, one
+ * as a single McIntosh-style wide meter window: solid black housing with corner screws, one
  * deep cobalt-blue lamp-lit glass face holding both channels as stacked rows (L on top, R
- * below). Each row carries a real power-meter's dual scale — an outer WATTS ring and an inner
- * DECIBELS ring, both read by one tapered needle — plus the current Sendspin track (artist /
- * title) printed below the glass, falling back to "Music Assistant" when no track info is
- * available.
+ * below). Each row carries that meter's dual-ring look — an outer and an inner dashed scale,
+ * both read by one tapered needle — but it's still a normal VU meter underneath: both rings
+ * share the same VU numbers rather than a separately calibrated watts/dB scale. The current
+ * Sendspin track (artist / title) prints inside the glass at the bottom, where "POWER OUTPUT"
+ * sits on the real unit, falling back to "Music Assistant" when no track info is available.
  */
 import { mountCanvas2D } from '../lib/canvas2d';
 import type { VisualizerFactory } from '../runtime/types';
@@ -58,20 +59,6 @@ function vuToAngle(vu: number): number {
     }
   }
   return TICK_ANGLES[TICK_ANGLES.length - 1];
-}
-
-/**
- * The watts-equivalent label for a dB mark (outer ring), e.g. -20 dB -> "1.5" (at a 150 W
- * reference). The +3 dB headroom mark is shown as a clean doubling (e.g. "300"), matching how
- * McIntosh actually labels it, rather than the slightly-off 10^0.3 result (299.25).
- */
-function wattsLabel(db: number, refWatts: number): string {
-  if (db === 3) return `${Math.round(refWatts * 2)}`;
-  const watts = refWatts * Math.pow(10, db / 10);
-  if (watts >= 10) return `${Math.round(watts)}`;
-  if (watts >= 1) return `${Math.round(watts * 10) / 10}`;
-  if (watts >= 0.1) return `.${Math.round(watts * 100)}`;
-  return `${Math.round(watts * 1000 * 10) / 10}m`;
 }
 
 /**
@@ -139,50 +126,69 @@ function drawDashedRing(
 }
 
 /**
+ * The small angled "stop" mark at each end of a ring — a real meter's scale ends in a short
+ * flick bent away from the dash direction (the mechanical end-of-travel marker), not just
+ * another straight dash like the rest of the graduation.
+ */
+function drawEndStop(
+  ctx: CanvasRenderingContext2D,
+  cx: number, pivotY: number, R: number,
+  angle: number, bendSign: 1 | -1, lineWidth: number
+) {
+  const bend = (16 * Math.PI) / 180;
+  const tangent = angle + bendSign * bend;
+  const baseX = cx + Math.sin(angle) * R;
+  const baseY = pivotY - Math.cos(angle) * R;
+  const tipLen = R * 0.032;
+  const tipX = cx + Math.sin(tangent) * (R + tipLen);
+  const tipY = pivotY - Math.cos(tangent) * (R + tipLen);
+  ctx.strokeStyle = '#0c2d44';
+  ctx.lineWidth = lineWidth;
+  ctx.lineCap = 'butt';
+  ctx.beginPath();
+  ctx.moveTo(baseX, baseY);
+  ctx.lineTo(tipX, tipY);
+  ctx.stroke();
+}
+
+/**
  * One channel's dual-ring scale + needle, fitted into a horizontal row of the shared glass —
- * an outer WATTS ring and an inner DECIBELS ring, both read by the same needle, like the real
- * McIntosh power-output meter. `caption` ('WATTS' / 'DECIBELS' / null) prints above the row.
- * Returns the row's lowest drawn pixel so the caller can stack the next row below it.
+ * an outer and an inner ring, both read by the same needle, like the real McIntosh power-output
+ * meter. The exact watts/dB calibration isn't the point — this is a normal VU meter wearing
+ * that meter's look, so both rings share the same simple VU numbers rather than a separately
+ * computed watts scale. Returns the row's lowest drawn pixel so the next row can stack below it.
  */
 function drawRow(
   ctx: CanvasRenderingContext2D,
   x: number, w: number, topY: number,
-  vuLevel: number, chLabel: string, caption: string | null, refWatts: number
+  vuLevel: number, chLabel: string
 ): { lowestY: number } {
   const red = 'hsl(353, 82%, 52%)';
-  const fsCaption = Math.max(10, Math.min(w * 0.0125, 24));
-  // The WATTS numbers read clearly larger than the DECIBELS numbers in the reference photo
-  // (roughly double) — not the same size, which is what made the two rings look flat/equal.
-  const fsOuter = Math.max(12, Math.min(w * 0.0145, 28));
-  const fsInner = Math.max(8, Math.min(w * 0.0078, 15));
+  const fsOuter = Math.max(12, Math.min(w * 0.016, 30));
+  const fsInner = Math.max(9, Math.min(w * 0.0105, 20));
 
-  let contentTop = topY;
-  if (caption) {
-    ctx.font = `600 ${fsCaption}px "Helvetica Neue", Arial, sans-serif`;
-    ctx.fillStyle = 'rgba(12,45,68,0.85)';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillText(caption, x + w / 2, contentTop + fsCaption);
-    contentTop += fsCaption * 1.55;
-  }
-  const wattsLabelSpace = fsOuter * 1.6;
-  const arcApexY = contentTop + wattsLabelSpace;
+  const wattsLabelSpace = fsOuter * 1.55;
+  const arcApexY = topY + wattsLabelSpace;
 
   const { R: Router, pivotY, cx } = fitRow(x, w, arcApexY, 0.88);
   // The pivot sits far below the row (shallow, wide sweep), so a smaller radius sharing that
   // same pivot would collapse toward it instead of nesting next to the outer ring. A small,
-  // fixed pixel gap (not a ratio of R) keeps the inner ring visually just inside the outer one.
-  const ringGap = fsOuter * 3.2 + fsInner * 1.6;
+  // fixed pixel gap (not a ratio of R) keeps the inner ring close against the outer one, like
+  // the reference's tightly nested pair rather than two widely separated arcs.
+  const ringGap = fsInner * 2.6;
   const Rinner = Router - ringGap;
 
   const dbLabels = ['-50', '-40', '-30', '-20', '-10', '0', '+3'];
-  const wLabels = DB_MARKS.map(v => wattsLabel(v, refWatts));
 
-  // Both rings read the same, fairly thin stroke weight — the reference doesn't make the outer
-  // ring noticeably heavier than the inner one, the way an earlier pass here did.
-  const ringLineWidth = Math.max(1.8, w * 0.0028);
+  // Both rings read the same, fairly thin stroke weight and the same single navy ink (with just
+  // the overload segment in red) — one continuous-reading dial, not two differently-styled ones.
+  const ringLineWidth = Math.max(2.0, w * 0.0032);
   drawDashedRing(ctx, cx, pivotY, Router, TICK_ANGLES, ringLineWidth, red);
   drawDashedRing(ctx, cx, pivotY, Rinner, TICK_ANGLES, ringLineWidth, red);
+  drawEndStop(ctx, cx, pivotY, Router, TICK_ANGLES[0], -1, ringLineWidth);
+  drawEndStop(ctx, cx, pivotY, Router, TICK_ANGLES[TICK_ANGLES.length - 1], 1, ringLineWidth);
+  drawEndStop(ctx, cx, pivotY, Rinner, TICK_ANGLES[0], -1, ringLineWidth);
+  drawEndStop(ctx, cx, pivotY, Rinner, TICK_ANGLES[TICK_ANGLES.length - 1], 1, ringLineWidth);
 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -193,15 +199,15 @@ function drawRow(
     const isRed = DB_MARKS[i] >= 1;
     ctx.fillStyle = isRed ? red : '#0c2d44';
     ctx.font = `600 ${fsOuter}px "Helvetica Neue", Arial, sans-serif`;
-    const lrOuter = Router + fsOuter * 0.95;
-    ctx.fillText(wLabels[i], cx + sin * lrOuter, pivotY - cos * lrOuter);
+    const lrOuter = Router + fsOuter * 0.8;
+    ctx.fillText(dbLabels[i], cx + sin * lrOuter, pivotY - cos * lrOuter);
     ctx.font = `600 ${fsInner}px "Helvetica Neue", Arial, sans-serif`;
-    const lrInner = Rinner + fsInner * 1.1;
+    const lrInner = Rinner + fsInner * 0.85;
     ctx.fillText(dbLabels[i], cx + sin * lrInner, pivotY - cos * lrInner);
   }
 
   // Channel label at the left edge of the row
-  ctx.font = `bold ${fsOuter * 0.85}px "Helvetica Neue", Arial, sans-serif`;
+  ctx.font = `bold ${fsOuter * 0.8}px "Helvetica Neue", Arial, sans-serif`;
   ctx.fillStyle = 'rgba(12,45,68,0.75)';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
@@ -281,28 +287,22 @@ function drawScrews(ctx: CanvasRenderingContext2D, x: number, y: number, w: numb
 function drawMeterWindow(
   ctx: CanvasRenderingContext2D,
   x: number, y: number, w: number, h: number,
-  vuL: number, vuR: number
+  vuL: number, vuR: number, nowPlaying: string
 ) {
   const cx = x + w / 2;
   const cr = w * 0.016;
   const bezelPad = Math.min(w, h) * 0.035;
 
-  // --- Brushed-metal housing ---
-  const housing = ctx.createLinearGradient(x, y - bezelPad, x, y + h + bezelPad);
-  housing.addColorStop(0, '#2b2d30');
-  housing.addColorStop(0.08, '#141516');
-  housing.addColorStop(0.5, '#0a0a0b');
-  housing.addColorStop(0.92, '#141516');
-  housing.addColorStop(1, '#2b2d30');
-  ctx.fillStyle = housing;
+  // --- Solid matte-black housing — a real stop/flat black, not a brushed-metal highlight band ---
+  ctx.fillStyle = '#060606';
   ctx.beginPath();
   ctx.roundRect(x - bezelPad, y - bezelPad, w + bezelPad * 2, h + bezelPad * 2, cr + bezelPad * 0.5);
   ctx.fill();
 
   drawScrews(ctx, x - bezelPad, y - bezelPad, w + bezelPad * 2, h + bezelPad * 2, Math.max(2.5, w * 0.007));
 
-  ctx.strokeStyle = 'rgba(210,214,220,0.4)';
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(210,214,220,0.22)';
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.roundRect(x - 2, y - 2, w + 4, h + 4, cr + 1);
   ctx.stroke();
@@ -313,53 +313,69 @@ function drawMeterWindow(
   ctx.roundRect(x, y, w, h, cr);
   ctx.clip();
 
-  // Flat, evenly-lit powder blue — close to a real backlit meter face, not a moody gradient
+  // Lamp-lit base: brighter upper-centre, darker toward the bottom — a real backlit bulb
+  // casting up into curved glass, not a flat, evenly-lit panel.
   const base = ctx.createLinearGradient(x, y, x, y + h);
-  base.addColorStop(0, '#3a8fc2');
-  base.addColorStop(0.5, '#4ea0d2');
-  base.addColorStop(1, '#3785b8');
+  base.addColorStop(0, '#5ab3e6');
+  base.addColorStop(0.35, '#3f96cf');
+  base.addColorStop(1, '#215f8c');
   ctx.fillStyle = base;
   ctx.fillRect(x, y, w, h);
 
-  // Faint centre lift, just enough to suggest backlighting without a dark gradient
-  const glow = ctx.createRadialGradient(cx, y + h * 0.5, 0, cx, y + h * 0.5, w * 0.55);
-  glow.addColorStop(0, 'rgba(220,245,255,0.18)');
-  glow.addColorStop(0.6, 'rgba(220,245,255,0.04)');
+  // Bright lamp hotspot, upper-centre
+  const glow = ctx.createRadialGradient(cx, y + h * 0.28, 0, cx, y + h * 0.28, w * 0.5);
+  glow.addColorStop(0, 'rgba(235,250,255,0.38)');
+  glow.addColorStop(0.5, 'rgba(220,245,255,0.1)');
   glow.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = glow;
   ctx.fillRect(x, y, w, h);
 
-  // Very light vignette, just softening the corners rather than darkening the whole face
-  const vignette = ctx.createRadialGradient(cx, y + h * 0.5, w * 0.55, cx, y + h * 0.5, w * 0.85);
+  // Real vignette: noticeably darker corners, especially the lower ones, for a convex-glass feel
+  const vignette = ctx.createRadialGradient(cx, y + h * 0.4, w * 0.3, cx, y + h * 0.4, w * 0.8);
   vignette.addColorStop(0, 'rgba(0,0,0,0)');
-  vignette.addColorStop(1, 'rgba(10,30,45,0.22)');
+  vignette.addColorStop(1, 'rgba(5,20,35,0.45)');
   ctx.fillStyle = vignette;
   ctx.fillRect(x, y, w, h);
+  const bottomShade = ctx.createLinearGradient(x, y + h * 0.6, x, y + h);
+  bottomShade.addColorStop(0, 'rgba(0,0,0,0)');
+  bottomShade.addColorStop(1, 'rgba(0,10,20,0.3)');
+  ctx.fillStyle = bottomShade;
+  ctx.fillRect(x, y, w, h);
 
-  const rowTopY1 = y + h * 0.015;
-  const row1 = drawRow(ctx, x, w, rowTopY1, vuL, 'L', 'WATTS', 150);
-  const rowTopY2 = row1.lowestY + h * 0.035;
-  drawRow(ctx, x, w, rowTopY2, vuR, 'R', 'DECIBELS', 150);
+  const rowTopY1 = y + h * 0.02;
+  const row1 = drawRow(ctx, x, w, rowTopY1, vuL, 'L');
+  const rowTopY2 = row1.lowestY + h * 0.03;
+  const row2 = drawRow(ctx, x, w, rowTopY2, vuR, 'R');
+
+  // Now-playing text sits inside the glass, at the bottom — where "POWER OUTPUT" sits on the
+  // real unit — in the same dark ink as the rest of the dial, not as separate white UI text.
+  const npFs = Math.max(9, Math.min(w * 0.0105, 18));
+  ctx.font = `600 ${npFs}px "Helvetica Neue", Arial, sans-serif`;
+  ctx.fillStyle = 'rgba(8,30,48,0.68)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  const npY = Math.max(row2.lowestY + npFs * 1.6, y + h - npFs * 0.9);
+  ctx.fillText(fitText(ctx, nowPlaying, w * 0.86), cx, Math.min(npY, y + h - npFs * 0.5));
 
   // Curved-glass sheen
   const sweep = ctx.createLinearGradient(x, y, x + w * 0.6, y + h);
-  sweep.addColorStop(0, 'rgba(255,255,255,0.13)');
+  sweep.addColorStop(0, 'rgba(255,255,255,0.15)');
   sweep.addColorStop(0.4, 'rgba(255,255,255,0.03)');
   sweep.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = sweep;
   ctx.fillRect(x, y, w, h);
 
   const domeShade = ctx.createLinearGradient(x, y, x, y + h);
-  domeShade.addColorStop(0, 'rgba(0,0,0,0.2)');
-  domeShade.addColorStop(0.1, 'rgba(0,0,0,0)');
-  domeShade.addColorStop(0.9, 'rgba(0,0,0,0)');
-  domeShade.addColorStop(1, 'rgba(0,0,0,0.28)');
+  domeShade.addColorStop(0, 'rgba(0,0,0,0.22)');
+  domeShade.addColorStop(0.12, 'rgba(0,0,0,0)');
+  domeShade.addColorStop(0.88, 'rgba(0,0,0,0)');
+  domeShade.addColorStop(1, 'rgba(0,0,0,0.34)');
   ctx.fillStyle = domeShade;
   ctx.fillRect(x, y, w, h);
 
   ctx.restore(); // end clip
 
-  ctx.strokeStyle = 'rgba(0,0,0,0.65)';
+  ctx.strokeStyle = 'rgba(0,0,0,0.7)';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.roundRect(x, y, w, h, cr);
@@ -428,38 +444,29 @@ const VUMeterMcIntosh: VisualizerFactory = ({ container }) => {
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, w, h);
 
-      // Reserve a strip at the bottom for the now-playing text
-      const textH = Math.max(h * 0.09, 22);
-      const meterAreaH = h - textH;
-
-      // One wide window holding both channels, sized to fill the available area
-      const pad = Math.min(w, meterAreaH) * 0.06;
-      const aspect = 2.15; // wide, landscape window; taller than before to fit the dual watts/dB rings
+      // One wide window holding both channels, sized to fill the available area. The now-playing
+      // text is printed inside the glass (where "POWER OUTPUT" sits on the real unit), so no
+      // separate strip is reserved outside the housing for it any more.
+      const pad = Math.min(w, h) * 0.06;
+      const aspect = 1.9; // wide, landscape window; tall enough for the tightened dual rings
 
       let mW = (w - pad * 2) * Math.min(s.scale, 2);
       let mH = mW / aspect;
-      const maxH = (meterAreaH - pad * 2) * Math.min(s.scale, 2);
+      const maxH = (h - pad * 2) * Math.min(s.scale, 2);
       if (mH > maxH) { mH = maxH; mW = mH * aspect; }
 
       const sx = (w - mW) / 2;
-      const sy = (meterAreaH - mH) / 2;
+      const sy = (h - mH) / 2;
 
       const clL = Math.max(-20, Math.min(3, smoothedL));
       const clR = Math.max(-20, Math.min(3, smoothedR));
-
-      drawMeterWindow(ctx, sx, sy, mW, mH, clL, clR);
 
       // Now-playing text: artist — title, falling back to "Music Assistant"
       const artist = metadata?.artist?.trim();
       const title = metadata?.title?.trim();
       const nowPlaying = title || artist ? [artist, title].filter(Boolean).join(' — ') : 'Music Assistant';
 
-      const fs = Math.max(10, Math.min(textH * 0.5, w * 0.022));
-      ctx.font = `${fs}px Arial, Helvetica, sans-serif`;
-      ctx.fillStyle = 'rgba(255,255,255,0.75)';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(fitText(ctx, nowPlaying, w * 0.9), w / 2, meterAreaH + textH / 2);
+      drawMeterWindow(ctx, sx, sy, mW, mH, clL, clR, nowPlaying);
     },
     dispose() {
       canvas.remove();
